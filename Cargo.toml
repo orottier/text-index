@@ -6,7 +6,6 @@ edition = "2018"
 
 [dependencies]
 csv = "1.0.5"
-multimap = "0.4.0"
 bincode = "1.1.2"
 
 [dependencies.clap]
