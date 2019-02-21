@@ -68,11 +68,14 @@ enum Operation {
     LE,
     GT,
     GE,
+    IN,
+    PRE,
 }
 
 struct Filter<'a> {
     op: Operation,
     value: &'a str,
+    value2: &'a str,
     column: usize,
 }
 
@@ -87,16 +90,47 @@ fn main() -> Result<(), Box<Error>> {
         )
         .subcommand(
             SubCommand::with_name("index")
-                .help("Build an index for a given column")
-                .arg(Arg::with_name("COLUMN").required(true).index(1))
-                .arg(Arg::with_name("TYPE").required(false).index(2)),
+                .about("Build an index for a given column")
+                .arg(
+                    Arg::with_name("COLUMN")
+                        .required(true)
+                        .index(1)
+                        .help("Column number (starts at 1)"),
+                )
+                .arg(
+                    Arg::with_name("TYPE")
+                        .required(false)
+                        .index(2)
+                        .help("Type (str(default), int, float)"),
+                ),
         )
         .subcommand(
             SubCommand::with_name("filter")
-                .help("Filter records on a column value")
-                .arg(Arg::with_name("COLUMN").required(true).index(1))
-                .arg(Arg::with_name("OP").required(true).index(2))
-                .arg(Arg::with_name("VALUE").required(true).index(3)),
+                .about("Filter records on a column value")
+                .arg(
+                    Arg::with_name("COLUMN")
+                        .required(true)
+                        .index(1)
+                        .help("Column number (starts at 1)"),
+                )
+                .arg(
+                    Arg::with_name("OP")
+                        .required(true)
+                        .index(2)
+                        .help("Operator (eq, lt, le, gt, ge, in, sw)"),
+                )
+                .arg(
+                    Arg::with_name("VALUE")
+                        .required(true)
+                        .index(3)
+                        .help("Value"),
+                )
+                .arg(
+                    Arg::with_name("VALUE2")
+                        .required(false)
+                        .index(4)
+                        .help("Value2 (when operator is `in`)"),
+                ),
         )
         .get_matches();
 
@@ -129,6 +163,8 @@ fn main() -> Result<(), Box<Error>> {
             .value_of("VALUE")
             .expect("required arg cannot be None");
 
+        let value2 = matches.value_of("VALUE2").unwrap_or("");
+
         let op_str = matches.value_of("OP").expect("required arg cannot be None");
         let op = match op_str.to_uppercase().as_ref() {
             "LT" => Operation::LT,
@@ -136,9 +172,16 @@ fn main() -> Result<(), Box<Error>> {
             "EQ" => Operation::EQ,
             "GE" => Operation::GE,
             "GT" => Operation::GT,
+            "IN" => Operation::IN,
+            "PRE" => Operation::PRE,
             _ => panic!("Unknown operator"),
         };
-        let select = Filter { op, value, column };
+        let select = Filter {
+            op,
+            value,
+            value2,
+            column,
+        };
 
         return filter(file, &filename, &select);
     }
@@ -207,6 +250,15 @@ fn filter(mut file: File, filename: &str, select: &Filter) -> Result<(), Box<Err
                 Operation::LT => (Unbounded, Excluded(select.value.to_owned())),
                 Operation::GT => (Excluded(select.value.to_owned()), Unbounded),
                 Operation::GE => (Included(select.value.to_owned()), Unbounded),
+                Operation::IN => (
+                    Included(select.value.to_owned()),
+                    Included(select.value2.to_owned()),
+                ),
+                Operation::PRE => {
+                    let mut upper = select.value.to_owned();
+                    upper.push('\u{E01EF}'); // highest valid unicode char (currently)
+                    (Included(select.value.to_owned()), Included(upper))
+                }
             };
 
             typed_index
@@ -224,6 +276,11 @@ fn filter(mut file: File, filename: &str, select: &Filter) -> Result<(), Box<Err
                 Operation::LT => (Excluded(i64::MIN), Excluded(value)),
                 Operation::GT => (Excluded(value), Excluded(i64::MAX)),
                 Operation::GE => (Included(value), Excluded(i64::MAX)),
+                Operation::IN => {
+                    let value2: i64 = select.value2.parse().unwrap_or(i64::MIN);
+                    (Included(value), Included(value2))
+                }
+                Operation::PRE => panic!("unsupported operator for integer"),
             };
 
             typed_index
@@ -234,7 +291,7 @@ fn filter(mut file: File, filename: &str, select: &Filter) -> Result<(), Box<Err
                 });
         }
         CsvIndexType::F64(typed_index) => {
-            let value: UnsafeFloat = UnsafeFloat(select.value.parse().unwrap_or(f64::NEG_INFINITY));
+            let value = UnsafeFloat(select.value.parse().unwrap_or(f64::NEG_INFINITY));
             let lower = Excluded(UnsafeFloat(f64::NEG_INFINITY));
             let upper = Excluded(UnsafeFloat(f64::INFINITY));
             let bounds = match select.op {
@@ -243,6 +300,11 @@ fn filter(mut file: File, filename: &str, select: &Filter) -> Result<(), Box<Err
                 Operation::LT => (lower, Excluded(value)),
                 Operation::GT => (Excluded(value), upper),
                 Operation::GE => (Included(value), upper),
+                Operation::IN => {
+                    let value2 = UnsafeFloat(select.value2.parse().unwrap_or(f64::NEG_INFINITY));
+                    (Included(value), Included(value2))
+                }
+                Operation::PRE => panic!("unsupported operator for float"),
             };
 
             typed_index
