@@ -11,7 +11,10 @@ use std::fs::File;
 use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
-use std::io::Write;
+
+use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 
 use std::collections::BTreeMap;
 
@@ -65,9 +68,10 @@ fn main() -> Result<(), Box<Error>> {
         let column = column - 1; // index starts at 1
 
         let index = index(file, column)?;
-        let encoded: Vec<u8> = bincode::serialize(&index).unwrap();
-        let mut fh = File::create(format!("{}.index.{}", filename, column + 1))?;
-        fh.write_all(&encoded)?;
+
+        let fh = File::create(format!("{}.index.{}", filename, column + 1))?;
+        let gz = GzEncoder::new(fh, Compression::fast());
+        bincode::serialize_into(gz, &index).unwrap();
 
         return Ok(());
     }
@@ -137,7 +141,8 @@ fn index(file: File, column: usize) -> Result<CsvIndex, Box<Error>> {
 
 fn filter(mut file: File, filename: &str, select: &Filter) -> Result<(), Box<Error>> {
     let fh = File::open(format!("{}.index.{}", filename, select.column + 1))?;
-    let index: CsvIndex = bincode::deserialize_from(fh)?;
+    let gz = GzDecoder::new(fh);
+    let index: CsvIndex = bincode::deserialize_from(gz)?;
 
     let bounds = match select.op {
         Operation::EQ => (
