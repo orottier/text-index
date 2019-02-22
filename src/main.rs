@@ -3,11 +3,15 @@ extern crate clap;
 extern crate csv;
 extern crate serde;
 
+mod bits;
+mod chunked_map;
+mod csv_index;
 mod unsafe_float;
+
+use crate::csv_index::{CsvIndex, CsvIndexType};
 use crate::unsafe_float::UnsafeFloat;
 
 use clap::{value_t, App, Arg, SubCommand};
-use serde::{Deserialize, Serialize};
 
 use std::error::Error;
 use std::ops::Bound::{Excluded, Included, Unbounded};
@@ -18,37 +22,9 @@ use std::io::Seek;
 use std::io::SeekFrom;
 
 use flate2::read::GzDecoder;
-use flate2::write::GzEncoder;
-use flate2::Compression;
-
-use std::collections::BTreeMap;
 
 use std::f64;
 use std::i64;
-
-type CsvIndex<R> = BTreeMap<R, Vec<(u64, u64)>>;
-
-#[derive(Serialize, Deserialize)]
-enum CsvIndexType {
-    STR(CsvIndex<String>),
-    I64(CsvIndex<i64>),
-    F64(CsvIndex<UnsafeFloat>),
-}
-
-#[inline]
-fn insert_csv_index(index: &mut CsvIndexType, key: String, value: (u64, u64)) -> () {
-    match index {
-        CsvIndexType::STR(index) => index.entry(key).or_insert_with(|| vec![]).push(value),
-        CsvIndexType::I64(index) => {
-            let key = key.parse().unwrap_or(i64::MIN);
-            index.entry(key).or_insert_with(|| vec![]).push(value)
-        }
-        CsvIndexType::F64(index) => {
-            let key = UnsafeFloat(key.parse().unwrap_or(f64::NEG_INFINITY));
-            index.entry(key).or_insert_with(|| vec![]).push(value)
-        }
-    }
-}
 
 #[inline]
 fn print_record(file: &mut File, byte_pos: u64, len: u64) {
@@ -146,11 +122,10 @@ fn main() -> Result<(), Box<Error>> {
 
         let csv_type = matches.value_of("TYPE").unwrap_or("STR").to_uppercase();
 
-        let index = index(file, column, csv_type)?;
+        let mut index = index(file, column, csv_type)?;
 
         let fh = File::create(format!("{}.index.{}", filename, column + 1))?;
-        let gz = GzEncoder::new(fh, Compression::fast());
-        bincode::serialize_into(gz, &index).unwrap();
+        index.serialize(fh);
 
         return Ok(());
     }
@@ -209,7 +184,7 @@ fn index(file: File, column: usize, csv_type: String) -> Result<CsvIndexType, Bo
 
         if prev_pos != 0 {
             counter += 1;
-            insert_csv_index(&mut index, prev_value.clone(), (prev_pos, pos - prev_pos));
+            index.insert_csv_index(prev_value.clone(), (prev_pos, pos - prev_pos));
         }
 
         // no new alloc
@@ -221,7 +196,7 @@ fn index(file: File, column: usize, csv_type: String) -> Result<CsvIndexType, Bo
     if prev_pos != 0 {
         counter += 1;
         pos = record.position().unwrap().byte();
-        insert_csv_index(&mut index, prev_value, (prev_pos, pos - prev_pos));
+        index.insert_csv_index(prev_value, (prev_pos, pos - prev_pos));
     }
 
     let unique = match &index {
