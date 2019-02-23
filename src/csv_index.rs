@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::fs::File;
 use std::io::Seek;
 use std::io::SeekFrom;
@@ -49,7 +50,7 @@ impl CsvIndexType {
         }
     }
 
-    pub fn serialize(&mut self, mut fh: File) {
+    pub fn serialize(&mut self, mut fh: File) -> Result<(), Box<Error>> {
         let num_chunks = 10;
         match self {
             CsvIndexType::STR(index) => {
@@ -63,32 +64,40 @@ impl CsvIndexType {
                 let typed_toc = CsvTocType::STR(toc);
 
                 // write phantom TOC to file, to get the right offsets
-                fh.write(&bits::u64_to_u8s(0));
-                bincode::serialize_into(fh.try_clone().unwrap(), &typed_toc);
-                let toc_len = fh.seek(SeekFrom::Current(0)).unwrap();
+                fh.write(&bits::u64_to_u8s(0))?;
+                bincode::serialize_into(&mut fh, &typed_toc)?;
+                let toc_len = fh.seek(SeekFrom::Current(0))?;
 
                 let mut toc: CsvToc<String> = Vec::with_capacity(num_chunks);
 
                 let mut prev_pos = 0;
-                chunked_map.into_iter().for_each(|(key, sub_map)| {
-                    let typed_sub = CsvIndexType::STR(sub_map);
-                    let gz = GzEncoder::new(fh.try_clone().unwrap(), Compression::fast());
-                    bincode::serialize_into(gz, &typed_sub).unwrap();
+                let write_ops: Result<Vec<()>, Box<dyn Error>> = chunked_map
+                    .into_iter()
+                    .map(|(key, sub_map)| {
+                        let typed_sub = CsvIndexType::STR(sub_map);
 
-                    let pos = fh.seek(SeekFrom::Current(0)).unwrap();
-                    toc.push((key, prev_pos));
+                        let gz = GzEncoder::new(&mut fh, Compression::fast());
+                        bincode::serialize_into(gz, &typed_sub)?;
 
-                    prev_pos = pos;
-                });
+                        let pos = fh.seek(SeekFrom::Current(0))?;
+                        toc.push((key, prev_pos));
+
+                        prev_pos = pos;
+                        Ok(())
+                    })
+                    .collect();
+                write_ops?; // propagate error, if any
 
                 let typed_toc = CsvTocType::STR(toc);
                 println!("TOC {:?}", typed_toc);
-                fh.seek(SeekFrom::Start(0)).unwrap();
-                fh.write(&bits::u64_to_u8s(toc_len));
-                bincode::serialize_into(fh, &typed_toc);
+                fh.seek(SeekFrom::Start(0))?;
+                fh.write(&bits::u64_to_u8s(toc_len))?;
+                bincode::serialize_into(&mut fh, &typed_toc)?;
             }
             CsvIndexType::I64(index) => (),
             CsvIndexType::F64(index) => (),
         };
+
+        Ok(())
     }
 }

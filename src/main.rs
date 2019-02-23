@@ -125,7 +125,7 @@ fn main() -> Result<(), Box<Error>> {
         let mut index = index(file, column, csv_type)?;
 
         let fh = File::create(format!("{}.index.{}", filename, column + 1))?;
-        index.serialize(fh);
+        index.serialize(fh)?;
 
         return Ok(());
     }
