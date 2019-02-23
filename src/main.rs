@@ -1,12 +1,10 @@
-extern crate bincode;
-extern crate clap;
-extern crate csv;
-extern crate serde;
-
 mod bits;
 mod chunked_map;
 mod csv_index;
 mod unsafe_float;
+
+use env_logger::Env;
+use log::info;
 
 use crate::csv_index::{CsvIndex, CsvIndexType};
 use crate::unsafe_float::UnsafeFloat;
@@ -54,6 +52,9 @@ struct Filter<'a> {
 }
 
 fn main() -> Result<(), Box<Error>> {
+    let env = Env::default().filter_or("RUST_LOG", "debug");
+    env_logger::init_from_env(env);
+
     let matches = App::new("csv_index")
         .version("0.1")
         .arg(
@@ -202,7 +203,7 @@ fn index(file: File, column: usize, csv_type: String) -> Result<CsvIndexType, Bo
         CsvIndexType::I64(index) => index.len(),
         CsvIndexType::F64(index) => index.len(),
     };
-    println!("Read {} rows with {} unique values", counter, unique);
+    info!("Read {} rows with {} unique values", counter, unique);
 
     Ok(index)
 }

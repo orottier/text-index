@@ -5,6 +5,8 @@ authors = ["Otto <otto@ot-to.nl>"]
 edition = "2018"
 
 [dependencies]
+env_logger = "0.6.0"
+log = "0.4.6"
 csv = "1.0.5"
 bincode = "1.1.2"
 flate2 = "1.0.6"

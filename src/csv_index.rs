@@ -20,6 +20,8 @@ use crate::unsafe_float::UnsafeFloat;
 use std::f64;
 use std::i64;
 
+use log::debug;
+
 pub type CsvToc<R> = Vec<(R, u64)>;
 pub type CsvIndex<R> = BTreeMap<R, Vec<(u64, u64)>>;
 
@@ -92,7 +94,8 @@ impl CsvIndexType {
                 write_ops?; // propagate error, if any
 
                 let typed_toc = CsvTocType::STR(toc);
-                println!("TOC {:?}", typed_toc);
+                debug!("TOC {:?}", typed_toc);
+
                 fh.seek(SeekFrom::Start(0))?;
                 fh.write(&bits::u64_to_u8s(toc_len))?;
                 bincode::serialize_into(&mut fh, &typed_toc)?;
@@ -112,7 +115,7 @@ impl CsvIndexType {
 
         let toc_data = (&mut reader).take(toc_len - 8);
         let toc_typed: CsvTocType = bincode::deserialize_from(toc_data)?;
-        println!("toc {:?}", toc_typed);
+        debug!("toc {:?}", toc_typed);
 
         match toc_typed {
             CsvTocType::STR(toc) => {
@@ -127,14 +130,14 @@ impl CsvIndexType {
                     }
                 });
 
-                println!("Seeking {}", prev_pos);
+                debug!("Seeking {}", prev_pos);
                 fh.seek(SeekFrom::Start(prev_pos))?;
                 let mut gzh: Box<dyn Read> = Box::new(fh);
                 if let Some((_key, pos)) = next {
                     if pos == 0 {
                         return Ok(CsvIndexType::STR(CsvIndex::new()));
                     }
-                    println!("with len {}", pos - prev_pos);
+                    debug!("with len {}", pos - prev_pos);
                     gzh = Box::new(gzh.take(pos - prev_pos));
                 }
 
