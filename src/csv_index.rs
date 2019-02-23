@@ -1,9 +1,12 @@
 use std::error::Error;
 use std::fs::File;
+use std::io::BufReader;
+use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
 use std::io::Write;
 
+use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 
@@ -51,9 +54,9 @@ impl CsvIndexType {
     }
 
     pub fn serialize(&mut self, mut fh: File) -> Result<(), Box<Error>> {
-        let num_chunks = 10;
         match self {
             CsvIndexType::STR(index) => {
+                let num_chunks = 1 + index.len() / 50000;
                 let mut toc: CsvToc<String> = Vec::with_capacity(num_chunks);
                 let chunked_map = chunk_map(index, num_chunks);
 
@@ -70,7 +73,7 @@ impl CsvIndexType {
 
                 let mut toc: CsvToc<String> = Vec::with_capacity(num_chunks);
 
-                let mut prev_pos = 0;
+                let mut prev_pos = toc_len;
                 let write_ops: Result<Vec<()>, Box<dyn Error>> = chunked_map
                     .into_iter()
                     .map(|(key, sub_map)| {
@@ -99,5 +102,47 @@ impl CsvIndexType {
         };
 
         Ok(())
+    }
+
+    pub fn open(mut fh: File, value: String) -> Result<CsvIndexType, Box<Error>> {
+        let mut reader = BufReader::new(&mut fh);
+        let mut size_buffer = [0u8; 8];
+        reader.read_exact(&mut size_buffer)?;
+        let toc_len = bits::u8s_to_u64(size_buffer);
+
+        let toc_data = (&mut reader).take(toc_len - 8);
+        let toc_typed: CsvTocType = bincode::deserialize_from(toc_data)?;
+        println!("toc {:?}", toc_typed);
+
+        match toc_typed {
+            CsvTocType::STR(toc) => {
+                let mut prev_pos = 0;
+                let mut toc_iter = toc.into_iter();
+                let next = toc_iter.find(|(key, pos)| {
+                    if *key > value {
+                        return true;
+                    } else {
+                        prev_pos = *pos;
+                        return false;
+                    }
+                });
+
+                println!("Seeking {}", prev_pos);
+                fh.seek(SeekFrom::Start(prev_pos))?;
+                let mut gzh: Box<dyn Read> = Box::new(fh);
+                if let Some((_key, pos)) = next {
+                    if pos == 0 {
+                        return Ok(CsvIndexType::STR(CsvIndex::new()));
+                    }
+                    println!("with len {}", pos - prev_pos);
+                    gzh = Box::new(gzh.take(pos - prev_pos));
+                }
+
+                let gz = GzDecoder::new(gzh);
+                let index: CsvIndexType = bincode::deserialize_from(gz)?;
+                Ok(index)
+            }
+            _ => panic!(""),
+        }
     }
 }

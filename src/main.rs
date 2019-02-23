@@ -21,8 +21,6 @@ use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
 
-use flate2::read::GzDecoder;
-
 use std::f64;
 use std::i64;
 
@@ -211,10 +209,9 @@ fn index(file: File, column: usize, csv_type: String) -> Result<CsvIndexType, Bo
 
 fn filter(mut file: File, filename: &str, select: &Filter) -> Result<(), Box<Error>> {
     let fh = File::open(format!("{}.index.{}", filename, select.column + 1))?;
-    let gz = GzDecoder::new(fh);
-    let index: CsvIndexType = bincode::deserialize_from(gz)?;
+    let csv_index = CsvIndexType::open(fh, select.value.to_owned())?;
 
-    match index {
+    match csv_index {
         CsvIndexType::STR(typed_index) => {
             let bounds = match select.op {
                 Operation::EQ => (
