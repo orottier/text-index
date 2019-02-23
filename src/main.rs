@@ -1,55 +1,20 @@
 mod bits;
 mod chunked_map;
 mod csv_index;
+mod filter;
 mod unsafe_float;
 
 use env_logger::Env;
 use log::info;
 
-use crate::csv_index::{CsvIndex, CsvIndexType};
-use crate::unsafe_float::UnsafeFloat;
+use crate::csv_index::{print_matching_records, CsvIndex, CsvIndexType};
+use crate::filter::{Filter, Operator};
 
 use clap::{value_t, App, Arg, SubCommand};
 
 use std::error::Error;
-use std::ops::Bound::{Excluded, Included, Unbounded};
 
 use std::fs::File;
-use std::io::Read;
-use std::io::Seek;
-use std::io::SeekFrom;
-
-use std::f64;
-use std::i64;
-
-#[inline]
-fn print_record(file: &mut File, byte_pos: u64, len: u64) {
-    let mut buf = vec![0u8; len as usize];
-    file.seek(SeekFrom::Start(byte_pos))
-        .expect("Unable to seek file pos");
-    file.read_exact(&mut buf).expect("Unable to read file");
-
-    // may result in invalid utf8 if file has changed after index
-    let record = unsafe { std::str::from_utf8_unchecked(&buf) };
-    print!("{}", record);
-}
-
-enum Operation {
-    EQ,
-    LT,
-    LE,
-    GT,
-    GE,
-    IN,
-    PRE,
-}
-
-struct Filter<'a> {
-    op: Operation,
-    value: &'a str,
-    value2: &'a str,
-    column: usize,
-}
 
 fn main() -> Result<(), Box<Error>> {
     let env = Env::default().filter_or("RUST_LOG", "debug");
@@ -119,9 +84,9 @@ fn main() -> Result<(), Box<Error>> {
         let column = value_t!(matches.value_of("COLUMN"), usize).unwrap_or_else(|e| e.exit());
         let column = column - 1; // index starts at 1
 
-        let csv_type = matches.value_of("TYPE").unwrap_or("STR").to_uppercase();
+        let csv_type = matches.value_of("TYPE").unwrap_or("STR");
 
-        let mut index = index(file, column, csv_type)?;
+        let mut index = index(file, column, &csv_type)?;
 
         let fh = File::create(format!("{}.index.{}", filename, column + 1))?;
         index.serialize(fh)?;
@@ -140,16 +105,8 @@ fn main() -> Result<(), Box<Error>> {
         let value2 = matches.value_of("VALUE2").unwrap_or("");
 
         let op_str = matches.value_of("OP").expect("required arg cannot be None");
-        let op = match op_str.to_uppercase().as_ref() {
-            "LT" => Operation::LT,
-            "LE" => Operation::LE,
-            "EQ" => Operation::EQ,
-            "GE" => Operation::GE,
-            "GT" => Operation::GT,
-            "IN" => Operation::IN,
-            "PRE" => Operation::PRE,
-            _ => panic!("Unknown operator"),
-        };
+        let op = Operator::from(op_str)?;
+
         let select = Filter {
             op,
             value,
@@ -163,13 +120,8 @@ fn main() -> Result<(), Box<Error>> {
     unreachable!();
 }
 
-fn index(file: File, column: usize, csv_type: String) -> Result<CsvIndexType, Box<Error>> {
-    let mut index = match csv_type.as_ref() {
-        "STR" => CsvIndexType::STR(CsvIndex::<String>::new()),
-        "INT" => CsvIndexType::I64(CsvIndex::<i64>::new()),
-        "FLOAT" => CsvIndexType::F64(CsvIndex::<UnsafeFloat>::new()),
-        _ => panic!("Unknown operator"),
-    };
+fn index(file: File, column: usize, csv_type: &str) -> Result<CsvIndexType, Box<Error>> {
+    let mut index = CsvIndexType::new(csv_type)?;
 
     let mut rdr = csv::Reader::from_reader(file);
     let mut record = csv::StringRecord::new();
@@ -198,94 +150,27 @@ fn index(file: File, column: usize, csv_type: String) -> Result<CsvIndexType, Bo
         index.insert_csv_index(prev_value, (prev_pos, pos - prev_pos));
     }
 
-    let unique = match &index {
-        CsvIndexType::STR(index) => index.len(),
-        CsvIndexType::I64(index) => index.len(),
-        CsvIndexType::F64(index) => index.len(),
-    };
-    info!("Read {} rows with {} unique values", counter, unique);
+    info!("Read {} rows with {} unique values", counter, index.len());
 
     Ok(index)
 }
 
-fn filter(mut file: File, filename: &str, select: &Filter) -> Result<(), Box<Error>> {
+fn filter(file: File, filename: &str, select: &Filter) -> Result<(), Box<Error>> {
     let fh = File::open(format!("{}.index.{}", filename, select.column + 1))?;
     let csv_index = CsvIndexType::open(fh, select.value.to_owned())?;
 
     match csv_index {
         CsvIndexType::STR(typed_index) => {
-            let bounds = match select.op {
-                Operation::EQ => (
-                    Included(select.value.to_owned()),
-                    Included(select.value.to_owned()),
-                ),
-                Operation::LE => (Unbounded, Included(select.value.to_owned())),
-                Operation::LT => (Unbounded, Excluded(select.value.to_owned())),
-                Operation::GT => (Excluded(select.value.to_owned()), Unbounded),
-                Operation::GE => (Included(select.value.to_owned()), Unbounded),
-                Operation::IN => (
-                    Included(select.value.to_owned()),
-                    Included(select.value2.to_owned()),
-                ),
-                Operation::PRE => {
-                    let mut upper = select.value.to_owned();
-                    upper.push('\u{E01EF}'); // highest valid unicode char (currently)
-                    (Included(select.value.to_owned()), Included(upper))
-                }
-            };
-
-            typed_index
-                .range(bounds)
-                .flat_map(|(_key, vals)| vals.into_iter())
-                .for_each(|&(byte_pos, len)| {
-                    print_record(&mut file, byte_pos, len);
-                });
+            let bounds = select.string_bounds();
+            print_matching_records(&typed_index, bounds, &file);
         }
         CsvIndexType::I64(typed_index) => {
-            let value: i64 = select.value.parse().unwrap_or(i64::MIN);
-            let bounds = match select.op {
-                Operation::EQ => (Included(value), Included(value)),
-                Operation::LE => (Excluded(i64::MIN), Included(value)),
-                Operation::LT => (Excluded(i64::MIN), Excluded(value)),
-                Operation::GT => (Excluded(value), Excluded(i64::MAX)),
-                Operation::GE => (Included(value), Excluded(i64::MAX)),
-                Operation::IN => {
-                    let value2: i64 = select.value2.parse().unwrap_or(i64::MIN);
-                    (Included(value), Included(value2))
-                }
-                Operation::PRE => panic!("unsupported operator for integer"),
-            };
-
-            typed_index
-                .range(bounds)
-                .flat_map(|(_key, vals)| vals.into_iter())
-                .for_each(|&(byte_pos, len)| {
-                    print_record(&mut file, byte_pos, len);
-                });
+            let bounds = select.int_bounds();
+            print_matching_records(&typed_index, bounds, &file);
         }
         CsvIndexType::F64(typed_index) => {
-            let value = UnsafeFloat(select.value.parse().unwrap_or(f64::NEG_INFINITY));
-            let lower = Excluded(UnsafeFloat(f64::NEG_INFINITY));
-            let upper = Excluded(UnsafeFloat(f64::INFINITY));
-            let bounds = match select.op {
-                Operation::EQ => (Included(value), Included(value)),
-                Operation::LE => (lower, Included(value)),
-                Operation::LT => (lower, Excluded(value)),
-                Operation::GT => (Excluded(value), upper),
-                Operation::GE => (Included(value), upper),
-                Operation::IN => {
-                    let value2 = UnsafeFloat(select.value2.parse().unwrap_or(f64::NEG_INFINITY));
-                    (Included(value), Included(value2))
-                }
-                Operation::PRE => panic!("unsupported operator for float"),
-            };
-
-            typed_index
-                .range(bounds)
-                .flat_map(|(_key, vals)| vals.into_iter())
-                .for_each(|&(byte_pos, len)| {
-                    print_record(&mut file, byte_pos, len);
-                });
+            let bounds = select.float_bounds();
+            print_matching_records(&typed_index, bounds, &file);
         }
     };
 

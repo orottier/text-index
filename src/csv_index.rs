@@ -12,6 +12,7 @@ use flate2::Compression;
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::collections::Bound;
 
 use crate::bits;
 use crate::chunked_map::chunk_map;
@@ -22,8 +23,33 @@ use std::i64;
 
 use log::debug;
 
+#[inline]
+fn print_record(mut file: &File, byte_pos: u64, len: u64) {
+    let mut buf = vec![0u8; len as usize];
+    file.seek(SeekFrom::Start(byte_pos))
+        .expect("Unable to seek file pos");
+    file.read_exact(&mut buf).expect("Unable to read file");
+
+    // may result in invalid utf8 if file has changed after index
+    let record = unsafe { std::str::from_utf8_unchecked(&buf) };
+    print!("{}", record);
+}
+
 pub type CsvToc<R> = Vec<(R, u64)>;
 pub type CsvIndex<R> = BTreeMap<R, Vec<(u64, u64)>>;
+
+pub fn print_matching_records<R: Ord>(
+    index: &CsvIndex<R>,
+    bounds: (Bound<R>, Bound<R>),
+    file: &File,
+) {
+    index
+        .range(bounds)
+        .flat_map(|(_key, vals)| vals.into_iter())
+        .for_each(|&(byte_pos, len)| {
+            print_record(file, byte_pos, len);
+        });
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum CsvTocType {
@@ -40,6 +66,15 @@ pub enum CsvIndexType {
 }
 
 impl CsvIndexType {
+    pub fn new(csv_type: &str) -> Result<Self, &'static str> {
+        match csv_type.to_uppercase().as_ref() {
+            "STR" => Ok(CsvIndexType::STR(CsvIndex::<String>::new())),
+            "INT" => Ok(CsvIndexType::I64(CsvIndex::<i64>::new())),
+            "FLOAT" => Ok(CsvIndexType::F64(CsvIndex::<UnsafeFloat>::new())),
+            _ => Err("Unknown operator"),
+        }
+    }
+
     #[inline]
     pub fn insert_csv_index(&mut self, key: String, value: (u64, u64)) -> () {
         match self {
@@ -52,6 +87,14 @@ impl CsvIndexType {
                 let key = UnsafeFloat(key.parse().unwrap_or(f64::NEG_INFINITY));
                 index.entry(key).or_insert_with(|| vec![]).push(value)
             }
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match &self {
+            CsvIndexType::STR(index) => index.len(),
+            CsvIndexType::I64(index) => index.len(),
+            CsvIndexType::F64(index) => index.len(),
         }
     }
 
