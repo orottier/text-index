@@ -1,10 +1,12 @@
 use std::error::Error;
 use std::fs::File;
+
 use std::io::BufReader;
 use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
 use std::io::Write;
+use std::io::{self, StdoutLock};
 
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
@@ -24,15 +26,13 @@ use std::i64;
 use log::debug;
 
 #[inline]
-fn print_record(mut file: &File, address: &Address) {
+fn print_record(handle: &mut StdoutLock, mut file: &File, address: &Address) {
     let mut buf = vec![0u8; address.length as usize];
     file.seek(SeekFrom::Start(address.offset))
         .expect("Unable to seek file pos");
     file.read_exact(&mut buf).expect("Unable to read file");
 
-    // may result in invalid utf8 if file has changed after index
-    let record = unsafe { std::str::from_utf8_unchecked(&buf) };
-    print!("{}", record);
+    handle.write_all(&buf).unwrap();
 }
 
 pub type CsvToc<R> = Vec<(R, u64)>;
@@ -49,11 +49,14 @@ pub fn print_matching_records<R: Ord>(
     bounds: (Bound<R>, Bound<R>),
     file: &File,
 ) {
+    let stdout = io::stdout();
+    let mut handle = stdout.lock();
+
     index
         .range(bounds)
         .flat_map(|(_key, vals)| vals.into_iter())
         .for_each(|address| {
-            print_record(file, address);
+            print_record(&mut handle, file, address);
         });
 }
 
