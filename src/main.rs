@@ -114,7 +114,7 @@ fn main() -> Result<(), Box<Error>> {
             column,
         };
 
-        return filter(file, &filename, &select);
+        return filter(&file, &filename, &select);
     }
 
     unreachable!();
@@ -165,22 +165,22 @@ fn index(file: File, column: usize, csv_type: &str) -> Result<CsvIndexType, Box<
     Ok(index)
 }
 
-fn filter(file: File, filename: &str, select: &Filter) -> Result<(), Box<Error>> {
+fn filter(file: &File, filename: &str, select: &Filter) -> Result<(), Box<Error>> {
     let fh = File::open(format!("{}.index.{}", filename, select.column + 1))?;
-    let csv_index = CsvIndexType::open(fh, select.value.to_owned())?;
+    let csv_index = CsvIndexType::open(fh, select.value)?;
 
     match csv_index {
         CsvIndexType::STR(typed_index) => {
             let bounds = select.string_bounds();
-            print_matching_records(&typed_index, bounds, &file);
+            print_matching_records(&typed_index, bounds, file);
         }
         CsvIndexType::I64(typed_index) => {
             let bounds = select.int_bounds();
-            print_matching_records(&typed_index, bounds, &file);
+            print_matching_records(&typed_index, bounds, file);
         }
         CsvIndexType::F64(typed_index) => {
             let bounds = select.float_bounds();
-            print_matching_records(&typed_index, bounds, &file);
+            print_matching_records(&typed_index, bounds, file);
         }
     };
 

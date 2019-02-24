@@ -82,7 +82,7 @@ impl CsvIndexType {
     }
 
     #[inline]
-    pub fn insert(&mut self, key: String, value: Address) -> () {
+    pub fn insert(&mut self, key: String, value: Address) {
         match self {
             CsvIndexType::STR(index) => index.entry(key).or_insert_with(|| vec![]).push(value),
             CsvIndexType::I64(index) => {
@@ -118,7 +118,7 @@ impl CsvIndexType {
                 let typed_toc = CsvTocType::STR(toc);
 
                 // write phantom TOC to file, to get the right offsets
-                fh.write(&bits::u64_to_u8s(0))?;
+                fh.write_all(&bits::u64_to_u8s(0))?;
                 bincode::serialize_into(&mut fh, &typed_toc)?;
                 let toc_len = fh.seek(SeekFrom::Current(0))?;
 
@@ -146,7 +146,7 @@ impl CsvIndexType {
                 debug!("TOC {:?}", typed_toc);
 
                 fh.seek(SeekFrom::Start(0))?;
-                fh.write(&bits::u64_to_u8s(toc_len))?;
+                fh.write_all(&bits::u64_to_u8s(toc_len))?;
                 bincode::serialize_into(&mut fh, &typed_toc)?;
             }
             CsvIndexType::I64(index) => (),
@@ -156,7 +156,7 @@ impl CsvIndexType {
         Ok(())
     }
 
-    pub fn open(mut fh: File, value: String) -> Result<CsvIndexType, Box<Error>> {
+    pub fn open(mut fh: File, value: &str) -> Result<CsvIndexType, Box<Error>> {
         let mut reader = BufReader::new(&mut fh);
         let mut size_buffer = [0u8; 8];
         reader.read_exact(&mut size_buffer)?;
@@ -171,11 +171,11 @@ impl CsvIndexType {
                 let mut prev_pos = 0;
                 let mut toc_iter = toc.into_iter();
                 let next = toc_iter.find(|(key, pos)| {
-                    if *key > value {
-                        return true;
+                    if key.as_str() > value {
+                        true
                     } else {
                         prev_pos = *pos;
-                        return false;
+                        false
                     }
                 });
 
