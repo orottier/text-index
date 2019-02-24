@@ -7,7 +7,7 @@ mod unsafe_float;
 use env_logger::Env;
 use log::info;
 
-use crate::csv_index::{print_matching_records, CsvIndex, CsvIndexType};
+use crate::csv_index::{print_matching_records, Address, CsvIndexType};
 use crate::filter::{Filter, Operator};
 
 use clap::{value_t, App, Arg, SubCommand};
@@ -135,7 +135,12 @@ fn index(file: File, column: usize, csv_type: &str) -> Result<CsvIndexType, Box<
 
         if prev_pos != 0 {
             counter += 1;
-            index.insert_csv_index(prev_value.clone(), (prev_pos, pos - prev_pos));
+
+            let address = Address {
+                offset: prev_pos,
+                length: (pos - prev_pos) as u32,
+            };
+            index.insert(prev_value.clone(), address);
         }
 
         // no new alloc
@@ -146,8 +151,13 @@ fn index(file: File, column: usize, csv_type: &str) -> Result<CsvIndexType, Box<
     }
     if prev_pos != 0 {
         counter += 1;
+
         pos = record.position().unwrap().byte();
-        index.insert_csv_index(prev_value, (prev_pos, pos - prev_pos));
+        let address = Address {
+            offset: prev_pos,
+            length: (pos - prev_pos) as u32,
+        };
+        index.insert(prev_value, address);
     }
 
     info!("Read {} rows with {} unique values", counter, index.len());

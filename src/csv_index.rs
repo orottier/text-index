@@ -24,9 +24,9 @@ use std::i64;
 use log::debug;
 
 #[inline]
-fn print_record(mut file: &File, byte_pos: u64, len: u64) {
-    let mut buf = vec![0u8; len as usize];
-    file.seek(SeekFrom::Start(byte_pos))
+fn print_record(mut file: &File, address: &Address) {
+    let mut buf = vec![0u8; address.length as usize];
+    file.seek(SeekFrom::Start(address.offset))
         .expect("Unable to seek file pos");
     file.read_exact(&mut buf).expect("Unable to read file");
 
@@ -36,7 +36,13 @@ fn print_record(mut file: &File, byte_pos: u64, len: u64) {
 }
 
 pub type CsvToc<R> = Vec<(R, u64)>;
-pub type CsvIndex<R> = BTreeMap<R, Vec<(u64, u64)>>;
+pub type CsvIndex<R> = BTreeMap<R, Vec<Address>>;
+
+#[derive(Serialize, Deserialize)]
+pub struct Address {
+    pub offset: u64,
+    pub length: u32,
+}
 
 pub fn print_matching_records<R: Ord>(
     index: &CsvIndex<R>,
@@ -46,8 +52,8 @@ pub fn print_matching_records<R: Ord>(
     index
         .range(bounds)
         .flat_map(|(_key, vals)| vals.into_iter())
-        .for_each(|&(byte_pos, len)| {
-            print_record(file, byte_pos, len);
+        .for_each(|address| {
+            print_record(file, address);
         });
 }
 
@@ -76,7 +82,7 @@ impl CsvIndexType {
     }
 
     #[inline]
-    pub fn insert_csv_index(&mut self, key: String, value: (u64, u64)) -> () {
+    pub fn insert(&mut self, key: String, value: Address) -> () {
         match self {
             CsvIndexType::STR(index) => index.entry(key).or_insert_with(|| vec![]).push(value),
             CsvIndexType::I64(index) => {
