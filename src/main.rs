@@ -2,6 +2,7 @@ mod bits;
 mod chunked_map;
 mod csv_index;
 mod filter;
+mod toc;
 mod unsafe_float;
 
 use env_logger::Env;
@@ -138,7 +139,7 @@ fn index(file: File, column: usize, csv_type: &str) -> Result<CsvIndexType, Box<
 
             let address = Address {
                 offset: prev_pos,
-                length: (pos - prev_pos) as u32,
+                length: pos - prev_pos,
             };
             index.insert(prev_value.clone(), address);
         }
@@ -155,7 +156,7 @@ fn index(file: File, column: usize, csv_type: &str) -> Result<CsvIndexType, Box<
         pos = record.position().unwrap().byte();
         let address = Address {
             offset: prev_pos,
-            length: (pos - prev_pos) as u32,
+            length: pos - prev_pos,
         };
         index.insert(prev_value, address);
     }

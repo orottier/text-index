@@ -18,6 +18,7 @@ use std::collections::Bound;
 
 use crate::bits;
 use crate::chunked_map::chunk_map;
+use crate::toc::{Toc, TypedToc};
 use crate::unsafe_float::UnsafeFloat;
 
 use std::f64;
@@ -35,13 +36,12 @@ fn print_record(handle: &mut StdoutLock, mut file: &File, address: &Address) {
     handle.write_all(&buf).unwrap();
 }
 
-pub type CsvToc<R> = Vec<(R, u64)>;
 pub type CsvIndex<R> = BTreeMap<R, Vec<Address>>;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Address {
     pub offset: u64,
-    pub length: u32,
+    pub length: u64,
 }
 
 pub fn print_matching_records<R: Ord>(
@@ -58,13 +58,6 @@ pub fn print_matching_records<R: Ord>(
         .for_each(|address| {
             print_record(&mut handle, file, address);
         });
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub enum CsvTocType {
-    STR(CsvToc<String>),
-    I64(CsvToc<i64>),
-    F64(CsvToc<UnsafeFloat>),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -111,21 +104,27 @@ impl CsvIndexType {
         match self {
             CsvIndexType::STR(index) => {
                 let num_chunks = 1 + index.len() / 50000;
-                let mut toc: CsvToc<String> = Vec::with_capacity(num_chunks);
+                let mut toc = Toc::<String>::new(num_chunks);
                 let chunked_map = chunk_map(index, num_chunks);
 
                 // build phantom TOC
                 chunked_map.iter().for_each(|(key, _sub_map)| {
-                    toc.push((key.to_owned(), 0));
+                    toc.push((
+                        key.to_owned(),
+                        Address {
+                            offset: 0,
+                            length: 0,
+                        },
+                    ));
                 });
-                let typed_toc = CsvTocType::STR(toc);
+                let typed_toc = TypedToc::STR(toc);
 
                 // write phantom TOC to file, to get the right offsets
                 fh.write_all(&bits::u64_to_u8s(0))?;
                 bincode::serialize_into(&mut fh, &typed_toc)?;
                 let toc_len = fh.seek(SeekFrom::Current(0))?;
 
-                let mut toc: CsvToc<String> = Vec::with_capacity(num_chunks);
+                let mut toc = Toc::<String>::new(num_chunks);
 
                 let mut prev_pos = toc_len;
                 let write_ops: Result<Vec<()>, Box<dyn Error>> = chunked_map
@@ -137,7 +136,11 @@ impl CsvIndexType {
                         bincode::serialize_into(gz, &typed_sub)?;
 
                         let pos = fh.seek(SeekFrom::Current(0))?;
-                        toc.push((key, prev_pos));
+                        let address = Address {
+                            offset: prev_pos,
+                            length: pos - prev_pos,
+                        };
+                        toc.push((key, address));
 
                         prev_pos = pos;
                         Ok(())
@@ -145,7 +148,7 @@ impl CsvIndexType {
                     .collect();
                 write_ops?; // propagate error, if any
 
-                let typed_toc = CsvTocType::STR(toc);
+                let typed_toc = TypedToc::STR(toc);
                 debug!("TOC {:?}", typed_toc);
 
                 fh.seek(SeekFrom::Start(0))?;
@@ -166,36 +169,23 @@ impl CsvIndexType {
         let toc_len = bits::u8s_to_u64(size_buffer);
 
         let toc_data = (&mut reader).take(toc_len - 8);
-        let toc_typed: CsvTocType = bincode::deserialize_from(toc_data)?;
+        let toc_typed: TypedToc = bincode::deserialize_from(toc_data)?;
         debug!("toc {:?}", toc_typed);
 
         match toc_typed {
-            CsvTocType::STR(toc) => {
-                let mut prev_pos = 0;
-                let mut toc_iter = toc.into_iter();
-                let next = toc_iter.find(|(key, pos)| {
-                    if key.as_str() > value {
-                        true
-                    } else {
-                        prev_pos = *pos;
-                        false
-                    }
-                });
+            TypedToc::STR(toc) => {
+                if let Some(address) = toc.find(&value.to_owned()) {
+                    debug!("Seeking {:?}", address);
+                    fh.seek(SeekFrom::Start(address.offset))?;
 
-                debug!("Seeking {}", prev_pos);
-                fh.seek(SeekFrom::Start(prev_pos))?;
-                let mut gzh: Box<dyn Read> = Box::new(fh);
-                if let Some((_key, pos)) = next {
-                    if pos == 0 {
-                        return Ok(CsvIndexType::STR(CsvIndex::new()));
-                    }
-                    debug!("with len {}", pos - prev_pos);
-                    gzh = Box::new(gzh.take(pos - prev_pos));
+                    let gzh = fh.take(address.length);
+                    let gz = GzDecoder::new(gzh);
+                    let index: CsvIndexType = bincode::deserialize_from(gz)?;
+
+                    Ok(index)
+                } else {
+                    Ok(CsvIndexType::STR(CsvIndex::new()))
                 }
-
-                let gz = GzDecoder::new(gzh);
-                let index: CsvIndexType = bincode::deserialize_from(gz)?;
-                Ok(index)
             }
             _ => panic!(""),
         }
