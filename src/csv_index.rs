@@ -8,11 +8,10 @@ use std::io::SeekFrom;
 use std::io::Write;
 use std::io::{self, StdoutLock};
 
-use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use std::collections::BTreeMap;
 use std::collections::Bound;
 
@@ -60,11 +59,22 @@ pub fn print_matching_records<R: Ord>(
         });
 }
 
-#[derive(Serialize, Deserialize)]
 pub enum CsvIndexType {
     STR(CsvIndex<String>),
     I64(CsvIndex<i64>),
     F64(CsvIndex<UnsafeFloat>),
+}
+impl Serialize for CsvIndexType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            CsvIndexType::STR(index) => index.serialize(serializer),
+            CsvIndexType::I64(index) => index.serialize(serializer),
+            CsvIndexType::F64(index) => index.serialize(serializer),
+        }
+    }
 }
 
 impl CsvIndexType {
@@ -160,34 +170,5 @@ impl CsvIndexType {
         };
 
         Ok(())
-    }
-
-    pub fn open(mut fh: File, value: &str) -> Result<CsvIndexType, Box<Error>> {
-        let mut reader = BufReader::new(&mut fh);
-        let mut size_buffer = [0u8; 8];
-        reader.read_exact(&mut size_buffer)?;
-        let toc_len = bits::u8s_to_u64(size_buffer);
-
-        let toc_data = (&mut reader).take(toc_len - 8);
-        let toc_typed: TypedToc = bincode::deserialize_from(toc_data)?;
-        debug!("toc {:?}", toc_typed);
-
-        match toc_typed {
-            TypedToc::STR(toc) => {
-                if let Some(address) = toc.find(&value.to_owned()) {
-                    debug!("Seeking {:?}", address);
-                    fh.seek(SeekFrom::Start(address.offset))?;
-
-                    let gzh = fh.take(address.length);
-                    let gz = GzDecoder::new(gzh);
-                    let index: CsvIndexType = bincode::deserialize_from(gz)?;
-
-                    Ok(index)
-                } else {
-                    Ok(CsvIndexType::STR(CsvIndex::new()))
-                }
-            }
-            _ => panic!(""),
-        }
     }
 }

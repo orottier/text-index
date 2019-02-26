@@ -1,3 +1,5 @@
+#![feature(range_contains)]
+
 mod bits;
 mod chunked_map;
 mod csv_index;
@@ -10,6 +12,7 @@ use log::info;
 
 use crate::csv_index::{print_matching_records, Address, CsvIndexType};
 use crate::filter::{Filter, Operator};
+use crate::toc::TypedToc;
 
 use clap::{value_t, App, Arg, SubCommand};
 
@@ -167,21 +170,24 @@ fn index(file: File, column: usize, csv_type: &str) -> Result<CsvIndexType, Box<
 }
 
 fn filter(file: &File, filename: &str, select: &Filter) -> Result<(), Box<Error>> {
-    let fh = File::open(format!("{}.index.{}", filename, select.column + 1))?;
-    let csv_index = CsvIndexType::open(fh, select.value)?;
+    let mut fh = File::open(format!("{}.index.{}", filename, select.column + 1))?;
+    let typed_toc = TypedToc::open(&mut fh)?;
 
-    match csv_index {
-        CsvIndexType::STR(typed_index) => {
+    match typed_toc {
+        TypedToc::STR(typed_toc) => {
             let bounds = select.string_bounds();
-            print_matching_records(&typed_index, bounds, file);
+            let index = typed_toc.get_index(fh, &bounds)?;
+            print_matching_records(&index, bounds, file);
         }
-        CsvIndexType::I64(typed_index) => {
+        TypedToc::I64(typed_toc) => {
             let bounds = select.int_bounds();
-            print_matching_records(&typed_index, bounds, file);
+            let index = typed_toc.get_index(fh, &bounds)?;
+            print_matching_records(&index, bounds, file);
         }
-        CsvIndexType::F64(typed_index) => {
+        TypedToc::F64(typed_toc) => {
             let bounds = select.float_bounds();
-            print_matching_records(&typed_index, bounds, file);
+            let index = typed_toc.get_index(fh, &bounds)?;
+            print_matching_records(&index, bounds, file);
         }
     };
 
