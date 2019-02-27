@@ -1,5 +1,3 @@
-#![feature(range_contains)]
-
 mod bits;
 mod chunked_map;
 mod csv_index;
@@ -170,7 +168,7 @@ fn index(file: File, column: usize, csv_type: &str) -> Result<CsvIndexType, Box<
     Ok(index)
 }
 
-fn filter(mut file: &mut File, filename: &str, select: &Filter) -> Result<(), Box<Error>> {
+fn filter(file: &mut File, filename: &str, select: &Filter) -> Result<(), Box<Error>> {
     let mut fh = File::open(format!("{}.index.{}", filename, select.column + 1))?;
     let typed_toc = TypedToc::open(&mut fh)?;
 
@@ -178,17 +176,17 @@ fn filter(mut file: &mut File, filename: &str, select: &Filter) -> Result<(), Bo
         TypedToc::STR(typed_toc) => {
             let bounds = select.string_bounds();
             let index = typed_toc.get_index(&mut fh, &bounds)?;
-            print_matching_records(index, bounds, &mut file);
+            print_matching_records(index, bounds, &file);
         }
         TypedToc::I64(typed_toc) => {
             let bounds = select.int_bounds();
             let index = typed_toc.get_index(&mut fh, &bounds)?;
-            print_matching_records(index, bounds, &mut file);
+            print_matching_records(index, bounds, &file);
         }
         TypedToc::F64(typed_toc) => {
             let bounds = select.float_bounds();
             let index = typed_toc.get_index(&mut fh, &bounds)?;
-            print_matching_records(index, bounds, &mut file);
+            print_matching_records(index, bounds, &file);
         }
     };
 

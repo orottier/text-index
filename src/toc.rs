@@ -9,8 +9,7 @@ use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
 
-use std::ops::Bound::{self, Excluded, Included, Unbounded};
-use std::ops::RangeBounds;
+use std::ops::Bound::{Excluded, Included, Unbounded};
 
 use flate2::read::GzDecoder;
 
@@ -21,6 +20,7 @@ use crate::bits;
 use crate::csv_index::Address;
 use crate::csv_index::CsvIndex;
 use crate::range::ranges_overlap;
+use crate::range::Range;
 use crate::unsafe_float::UnsafeFloat;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -47,7 +47,7 @@ impl<R: Ord + DeserializeOwned + Clone + Debug> Toc<R> {
         self.addr.push(value);
     }
 
-    fn bounds(&self) -> Vec<(Address, (Bound<R>, Bound<R>))> {
+    fn bounds(&self) -> Vec<(Address, Range<R>)> {
         let mut bounds = Vec::new();
 
         let mut prev_bound = Unbounded;
@@ -74,7 +74,7 @@ impl<R: Ord + DeserializeOwned + Clone + Debug> Toc<R> {
         bounds
     }
 
-    pub fn find(self, bounds: &(Bound<R>, Bound<R>)) -> Vec<Address> {
+    pub fn find(self, bounds: &Range<R>) -> Vec<Address> {
         let toc_bounds = self.bounds();
         debug!("toc bounds {:?}", toc_bounds);
 
@@ -87,8 +87,8 @@ impl<R: Ord + DeserializeOwned + Clone + Debug> Toc<R> {
 
     pub fn get_index(
         self,
-        mut fh: &mut File,
-        bounds: &(Bound<R>, Bound<R>),
+        fh: &mut File,
+        bounds: &Range<R>,
     ) -> Result<Vec<CsvIndex<R>>, Box<Error>> {
         let addresses = self.find(bounds);
         debug!("need to fetch maps {:?}", addresses);

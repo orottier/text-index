@@ -1,7 +1,6 @@
 use std::error::Error;
 use std::fs::File;
 
-use std::io::BufReader;
 use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
@@ -13,10 +12,10 @@ use flate2::Compression;
 
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::BTreeMap;
-use std::ops::Bound;
 
 use crate::bits;
 use crate::chunked_map::chunk_map;
+use crate::range::Range;
 use crate::toc::{Toc, TypedToc};
 use crate::unsafe_float::UnsafeFloat;
 
@@ -45,8 +44,8 @@ pub struct Address {
 
 pub fn print_matching_records<R: Ord + Clone>(
     indexes: Vec<CsvIndex<R>>,
-    bounds: (Bound<R>, Bound<R>),
-    mut file: &File,
+    bounds: Range<R>,
+    file: &File,
 ) {
     let stdout = io::stdout();
     let mut handle = stdout.lock();
@@ -57,7 +56,7 @@ pub fn print_matching_records<R: Ord + Clone>(
             .range(b_clone)
             .flat_map(|(_key, vals)| vals.into_iter())
             .for_each(|address| {
-                print_record(&mut handle, &mut file, address);
+                print_record(&mut handle, &file, address);
             });
     });
 }
