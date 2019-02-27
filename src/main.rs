@@ -4,6 +4,7 @@ mod bits;
 mod chunked_map;
 mod csv_index;
 mod filter;
+mod range;
 mod toc;
 mod unsafe_float;
 
@@ -82,7 +83,7 @@ fn main() -> Result<(), Box<Error>> {
         .value_of("INPUT")
         .expect("required arg cannot be None")
         .to_owned();
-    let file = File::open(filename.clone())?;
+    let mut file = File::open(filename.clone())?;
 
     if let Some(matches) = matches.subcommand_matches("index") {
         let column = value_t!(matches.value_of("COLUMN"), usize).unwrap_or_else(|e| e.exit());
@@ -118,7 +119,7 @@ fn main() -> Result<(), Box<Error>> {
             column,
         };
 
-        return filter(&file, &filename, &select);
+        return filter(&mut file, &filename, &select);
     }
 
     unreachable!();
@@ -169,25 +170,25 @@ fn index(file: File, column: usize, csv_type: &str) -> Result<CsvIndexType, Box<
     Ok(index)
 }
 
-fn filter(file: &File, filename: &str, select: &Filter) -> Result<(), Box<Error>> {
+fn filter(mut file: &mut File, filename: &str, select: &Filter) -> Result<(), Box<Error>> {
     let mut fh = File::open(format!("{}.index.{}", filename, select.column + 1))?;
     let typed_toc = TypedToc::open(&mut fh)?;
 
     match typed_toc {
         TypedToc::STR(typed_toc) => {
             let bounds = select.string_bounds();
-            let index = typed_toc.get_index(fh, &bounds)?;
-            print_matching_records(&index, bounds, file);
+            let index = typed_toc.get_index(&mut fh, &bounds)?;
+            print_matching_records(index, bounds, &mut file);
         }
         TypedToc::I64(typed_toc) => {
             let bounds = select.int_bounds();
-            let index = typed_toc.get_index(fh, &bounds)?;
-            print_matching_records(&index, bounds, file);
+            let index = typed_toc.get_index(&mut fh, &bounds)?;
+            print_matching_records(index, bounds, &mut file);
         }
         TypedToc::F64(typed_toc) => {
             let bounds = select.float_bounds();
-            let index = typed_toc.get_index(fh, &bounds)?;
-            print_matching_records(&index, bounds, file);
+            let index = typed_toc.get_index(&mut fh, &bounds)?;
+            print_matching_records(index, bounds, &mut file);
         }
     };
 

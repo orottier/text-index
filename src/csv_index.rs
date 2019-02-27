@@ -13,7 +13,7 @@ use flate2::Compression;
 
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::BTreeMap;
-use std::collections::Bound;
+use std::ops::Bound;
 
 use crate::bits;
 use crate::chunked_map::chunk_map;
@@ -43,20 +43,23 @@ pub struct Address {
     pub length: u64,
 }
 
-pub fn print_matching_records<R: Ord>(
-    index: &CsvIndex<R>,
+pub fn print_matching_records<R: Ord + Clone>(
+    indexes: Vec<CsvIndex<R>>,
     bounds: (Bound<R>, Bound<R>),
-    file: &File,
+    mut file: &File,
 ) {
     let stdout = io::stdout();
     let mut handle = stdout.lock();
 
-    index
-        .range(bounds)
-        .flat_map(|(_key, vals)| vals.into_iter())
-        .for_each(|address| {
-            print_record(&mut handle, file, address);
-        });
+    indexes.into_iter().for_each(|index| {
+        let b_clone = (bounds.0.clone(), bounds.1.clone());
+        index
+            .range(b_clone)
+            .flat_map(|(_key, vals)| vals.into_iter())
+            .for_each(|address| {
+                print_record(&mut handle, &mut file, address);
+            });
+    });
 }
 
 pub enum CsvIndexType {
@@ -113,7 +116,7 @@ impl CsvIndexType {
     pub fn serialize(&mut self, mut fh: File) -> Result<(), Box<Error>> {
         match self {
             CsvIndexType::STR(index) => {
-                let num_chunks = 1 + index.len() / 50000;
+                let num_chunks = 2 + index.len() / 50000;
                 let mut toc = Toc::<String>::new(num_chunks);
                 let chunked_map = chunk_map(index, num_chunks);
 
