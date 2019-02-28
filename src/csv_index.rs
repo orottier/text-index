@@ -7,13 +7,10 @@ use std::io::SeekFrom;
 use std::io::Write;
 use std::io::{self, StdoutLock};
 
-use flate2::write::GzEncoder;
-use flate2::Compression;
-
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::BTreeMap;
 
-use crate::bits;
 use crate::chunked_map::chunk_map;
 use crate::range::Range;
 use crate::toc::{Toc, TypedToc};
@@ -23,6 +20,7 @@ use std::f64;
 use std::i64;
 
 use log::debug;
+use std::fmt::Debug;
 
 #[inline]
 fn print_record(handle: &mut StdoutLock, mut file: &File, address: &Address) {
@@ -34,7 +32,14 @@ fn print_record(handle: &mut StdoutLock, mut file: &File, address: &Address) {
     handle.write_all(&buf).unwrap();
 }
 
-pub type CsvIndex<R> = BTreeMap<R, Vec<Address>>;
+#[derive(Serialize, Deserialize)]
+pub struct CsvIndex<R: Ord>(pub BTreeMap<R, Vec<Address>>);
+
+impl<R: Ord> CsvIndex<R> {
+    pub fn new() -> Self {
+        CsvIndex(BTreeMap::new())
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Address {
@@ -42,7 +47,7 @@ pub struct Address {
     pub length: u64,
 }
 
-pub fn print_matching_records<R: Ord + Clone>(
+pub fn print_matching_records<R: Ord + Clone + Debug + DeserializeOwned>(
     indexes: Vec<CsvIndex<R>>,
     bounds: Range<R>,
     file: &File,
@@ -53,6 +58,7 @@ pub fn print_matching_records<R: Ord + Clone>(
     indexes.into_iter().for_each(|index| {
         let b_clone = (bounds.0.clone(), bounds.1.clone());
         index
+            .0
             .range(b_clone)
             .flat_map(|(_key, vals)| vals.into_iter())
             .for_each(|address| {
@@ -72,9 +78,9 @@ impl Serialize for CsvIndexType {
         S: Serializer,
     {
         match self {
-            CsvIndexType::STR(index) => index.serialize(serializer),
-            CsvIndexType::I64(index) => index.serialize(serializer),
-            CsvIndexType::F64(index) => index.serialize(serializer),
+            CsvIndexType::STR(index) => index.0.serialize(serializer),
+            CsvIndexType::I64(index) => index.0.serialize(serializer),
+            CsvIndexType::F64(index) => index.0.serialize(serializer),
         }
     }
 }
@@ -92,83 +98,94 @@ impl CsvIndexType {
     #[inline]
     pub fn insert(&mut self, key: String, value: Address) {
         match self {
-            CsvIndexType::STR(index) => index.entry(key).or_insert_with(|| vec![]).push(value),
+            CsvIndexType::STR(index) => index.0.entry(key).or_insert_with(|| vec![]).push(value),
             CsvIndexType::I64(index) => {
                 let key = key.parse().unwrap_or(i64::MIN);
-                index.entry(key).or_insert_with(|| vec![]).push(value)
+                index.0.entry(key).or_insert_with(|| vec![]).push(value)
             }
             CsvIndexType::F64(index) => {
                 let key = UnsafeFloat(key.parse().unwrap_or(f64::NEG_INFINITY));
-                index.entry(key).or_insert_with(|| vec![]).push(value)
+                index.0.entry(key).or_insert_with(|| vec![]).push(value)
             }
         }
     }
 
     pub fn len(&self) -> usize {
         match &self {
-            CsvIndexType::STR(index) => index.len(),
-            CsvIndexType::I64(index) => index.len(),
-            CsvIndexType::F64(index) => index.len(),
+            CsvIndexType::STR(index) => index.0.len(),
+            CsvIndexType::I64(index) => index.0.len(),
+            CsvIndexType::F64(index) => index.0.len(),
         }
     }
 
     pub fn serialize(&mut self, mut fh: File) -> Result<(), Box<Error>> {
+        let num_chunks = 2 + self.len() / 50000;
+
         match self {
             CsvIndexType::STR(index) => {
-                let num_chunks = 2 + index.len() / 50000;
+                let chunked_map = chunk_map(&mut index.0, num_chunks);
                 let mut toc = Toc::<String>::new(num_chunks);
-                let chunked_map = chunk_map(index, num_chunks);
 
                 // build phantom TOC
-                chunked_map.iter().for_each(|(key, _sub_map)| {
-                    toc.push((
-                        key.to_owned(),
-                        Address {
-                            offset: 0,
-                            length: 0,
-                        },
-                    ));
-                });
-                let typed_toc = TypedToc::STR(toc);
+                toc.build_empty(&chunked_map);
 
                 // write phantom TOC to file, to get the right offsets
-                fh.write_all(&bits::u64_to_u8s(0))?;
-                bincode::serialize_into(&mut fh, &typed_toc)?;
+                let typed_toc = TypedToc::STR(toc);
+                typed_toc.write_head(&mut fh, 0)?;
+
+                // count size of toc
                 let toc_len = fh.seek(SeekFrom::Current(0))?;
 
                 let mut toc = Toc::<String>::new(num_chunks);
-
-                let mut prev_pos = toc_len;
-                let write_ops: Result<Vec<()>, Box<dyn Error>> = chunked_map
-                    .into_iter()
-                    .map(|(key, sub_map)| {
-                        let typed_sub = CsvIndexType::STR(sub_map);
-
-                        let gz = GzEncoder::new(&mut fh, Compression::fast());
-                        bincode::serialize_into(gz, &typed_sub)?;
-
-                        let pos = fh.seek(SeekFrom::Current(0))?;
-                        let address = Address {
-                            offset: prev_pos,
-                            length: pos - prev_pos,
-                        };
-                        toc.push((key, address));
-
-                        prev_pos = pos;
-                        Ok(())
-                    })
-                    .collect();
-                write_ops?; // propagate error, if any
+                toc.write_maps(&mut fh, chunked_map, toc_len)?;
 
                 let typed_toc = TypedToc::STR(toc);
                 debug!("TOC {:?}", typed_toc);
-
-                fh.seek(SeekFrom::Start(0))?;
-                fh.write_all(&bits::u64_to_u8s(toc_len))?;
-                bincode::serialize_into(&mut fh, &typed_toc)?;
+                typed_toc.write_head(&mut fh, toc_len)?;
             }
-            CsvIndexType::I64(index) => (),
-            CsvIndexType::F64(index) => (),
+
+            CsvIndexType::I64(index) => {
+                let chunked_map = chunk_map(&mut index.0, num_chunks);
+                let mut toc = Toc::<i64>::new(num_chunks);
+
+                // build phantom TOC
+                toc.build_empty(&chunked_map);
+
+                // write phantom TOC to file, to get the right offsets
+                let typed_toc = TypedToc::I64(toc);
+                typed_toc.write_head(&mut fh, 0)?;
+
+                // count size of toc
+                let toc_len = fh.seek(SeekFrom::Current(0))?;
+
+                let mut toc = Toc::<i64>::new(num_chunks);
+                toc.write_maps(&mut fh, chunked_map, toc_len)?;
+
+                let typed_toc = TypedToc::I64(toc);
+                debug!("TOC {:?}", typed_toc);
+                typed_toc.write_head(&mut fh, toc_len)?;
+            }
+            CsvIndexType::F64(index) => {
+                let chunked_map = chunk_map(&mut index.0, num_chunks);
+                let mut toc = Toc::<UnsafeFloat>::new(num_chunks);
+
+                // build phantom TOC
+                toc.build_empty(&chunked_map);
+
+                // write phantom TOC to file, to get the right offsets
+                let typed_toc = TypedToc::F64(toc);
+                typed_toc.write_head(&mut fh, 0)?;
+
+                // count size of toc
+                let toc_len = fh.seek(SeekFrom::Current(0))?;
+
+                let mut toc = Toc::<UnsafeFloat>::new(num_chunks);
+                toc.write_maps(&mut fh, chunked_map, toc_len)?;
+
+                let typed_toc = TypedToc::F64(toc);
+                debug!("TOC {:?}", typed_toc);
+                typed_toc.write_head(&mut fh, toc_len)?;
+            }
         };
 
         Ok(())

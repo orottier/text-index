@@ -4,14 +4,19 @@ use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fs::File;
 
+use flate2::write::GzEncoder;
+use flate2::Compression;
+
 use std::io::BufReader;
 use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
+use std::io::Write;
 
 use std::ops::Bound::{Excluded, Included, Unbounded};
 
 use flate2::read::GzDecoder;
+use std::collections::BTreeMap;
 
 use log::debug;
 use std::fmt::Debug;
@@ -36,7 +41,7 @@ pub enum TypedToc {
     F64(Toc<UnsafeFloat>),
 }
 
-impl<R: Ord + DeserializeOwned + Clone + Debug> Toc<R> {
+impl<R: Ord + Serialize + DeserializeOwned + Clone + Debug> Toc<R> {
     pub fn new(num_chapters: usize) -> Self {
         Self {
             addr: Vec::with_capacity(num_chapters),
@@ -106,6 +111,48 @@ impl<R: Ord + DeserializeOwned + Clone + Debug> Toc<R> {
 
         Ok(maps)
     }
+
+    pub fn build_empty<V>(&mut self, chunked_map: &[(R, BTreeMap<R, V>)]) {
+        chunked_map.iter().for_each(|(key, _sub_map)| {
+            self.push((
+                key.to_owned(),
+                Address {
+                    offset: 0,
+                    length: 0,
+                },
+            ));
+        });
+    }
+
+    pub fn write_maps(
+        &mut self,
+        mut fh: &mut File,
+        chunked_map: Vec<(R, BTreeMap<R, Vec<Address>>)>,
+        offset: u64,
+    ) -> Result<(), Box<dyn Error>> {
+        let mut prev_pos = offset;
+        let write_ops: Result<Vec<()>, Box<dyn Error>> = chunked_map
+            .into_iter()
+            .map(|(key, sub_map)| {
+                let index = CsvIndex(sub_map);
+
+                let gz = GzEncoder::new(&mut fh, Compression::fast());
+                bincode::serialize_into(gz, &index)?;
+
+                let pos = fh.seek(SeekFrom::Current(0))?;
+                let address = Address {
+                    offset: prev_pos,
+                    length: pos - prev_pos,
+                };
+                self.push((key, address));
+
+                prev_pos = pos;
+                Ok(())
+            })
+            .collect();
+
+        write_ops.map(|_| ())
+    }
 }
 
 impl TypedToc {
@@ -120,5 +167,15 @@ impl TypedToc {
         debug!("toc {:?}", toc_typed);
 
         Ok(toc_typed)
+    }
+
+    pub fn write_head(&self, mut fh: &mut File, length: u64) -> Result<(), Box<Error>> {
+        if length != 0 {
+            fh.seek(SeekFrom::Start(0))?;
+        }
+        fh.write_all(&bits::u64_to_u8s(length))?;
+        bincode::serialize_into(&mut fh, &self)?;
+
+        Ok(())
     }
 }
