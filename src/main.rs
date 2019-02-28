@@ -7,7 +7,8 @@ mod toc;
 mod unsafe_float;
 
 use env_logger::Env;
-use log::info;
+use log::{debug, info};
+use std::time::Instant;
 
 use crate::csv_index::{print_matching_records, Address, CsvIndexType};
 use crate::filter::{Filter, Operator};
@@ -133,6 +134,8 @@ fn index(file: File, column: usize, csv_type: &str) -> Result<CsvIndexType, Box<
     let mut pos;
     let mut counter = 0u64;
 
+    let start = Instant::now();
+
     while rdr.read_record(&mut record)? {
         pos = record.position().unwrap().byte();
 
@@ -151,6 +154,10 @@ fn index(file: File, column: usize, csv_type: &str) -> Result<CsvIndexType, Box<
         prev_value.push_str(&record[column]);
 
         prev_pos = pos;
+
+        if counter % 1_000_000 == 0 {
+            debug!("Processed {}M items", counter / 1_000_000);
+        }
     }
     if prev_pos != 0 {
         counter += 1;
@@ -164,6 +171,10 @@ fn index(file: File, column: usize, csv_type: &str) -> Result<CsvIndexType, Box<
     }
 
     info!("Read {} rows with {} unique values", counter, index.len());
+    let elapsed = start.elapsed().as_secs();
+    if elapsed > 0 {
+        info!("Records/sec: {}", counter / elapsed);
+    }
 
     Ok(index)
 }
