@@ -2,6 +2,7 @@ mod bits;
 mod chunked_map;
 mod csv_index;
 mod filter;
+mod index;
 mod range;
 mod toc;
 mod unsafe_float;
@@ -10,7 +11,7 @@ use env_logger::Env;
 use log::{debug, info};
 use std::time::Instant;
 
-use crate::csv_index::{print_matching_records, Address, CsvIndexType};
+use crate::csv_index::{print_matching_records, CsvIndexType};
 use crate::filter::{Filter, Operator};
 use crate::toc::TypedToc;
 
@@ -83,7 +84,6 @@ fn main() -> Result<(), Box<Error>> {
         .value_of("INPUT")
         .expect("required arg cannot be None")
         .to_owned();
-    let mut file = File::open(filename.clone())?;
 
     if let Some(matches) = matches.subcommand_matches("index") {
         let column = value_t!(matches.value_of("COLUMN"), usize).unwrap_or_else(|e| e.exit());
@@ -91,7 +91,7 @@ fn main() -> Result<(), Box<Error>> {
 
         let csv_type = matches.value_of("TYPE").unwrap_or("STR");
 
-        let mut index = index(file, column, &csv_type)?;
+        let mut index = index(&filename, column, &csv_type)?;
 
         let fh = File::create(format!("{}.index.{}", filename, column + 1))?;
         index.serialize(fh)?;
@@ -100,6 +100,8 @@ fn main() -> Result<(), Box<Error>> {
     }
 
     if let Some(matches) = matches.subcommand_matches("filter") {
+        let mut file = File::open(filename.clone())?;
+
         let column = value_t!(matches.value_of("COLUMN"), usize).unwrap_or_else(|e| e.exit());
         let column = column - 1; // index starts at 1
 
@@ -125,59 +127,27 @@ fn main() -> Result<(), Box<Error>> {
     unreachable!();
 }
 
-fn index(file: File, column: usize, csv_type: &str) -> Result<CsvIndexType, Box<Error>> {
+fn index(filename: &str, column: usize, csv_type: &str) -> Result<CsvIndexType, Box<dyn Error>> {
+    let start = Instant::now();
+
     let csv_index = Arc::new(Mutex::new(CsvIndexType::new(csv_type)?));
 
-    let thread_index = Arc::clone(&csv_index);
-    let handle = thread::spawn(move || {
-        let mut locked_index = thread_index.lock().unwrap();
+    let mut handles = Vec::new();
+    for _ in 0..5 {
+        let thread_index = Arc::clone(&csv_index);
+        let thread_file = File::open(filename)?;
+        let handle = thread::spawn(move || index::scan_file(&thread_file, column, &thread_index));
 
-        let mut rdr = csv::Reader::from_reader(file);
-        let mut record = csv::StringRecord::new();
-        let mut prev_value = String::from("");
-        let mut prev_pos = 0;
-        let mut pos;
-        let mut counter = 0u64;
+        handles.push(handle);
+    }
 
-        while rdr.read_record(&mut record).unwrap() {
-            pos = record.position().unwrap().byte();
-
-            if prev_pos != 0 {
-                counter += 1;
-
-                let address = Address {
-                    offset: prev_pos,
-                    length: pos - prev_pos,
-                };
-                locked_index.insert(prev_value.clone(), address);
-            }
-
-            // no new alloc
-            prev_value.clear();
-            prev_value.push_str(&record[column]);
-
-            prev_pos = pos;
-
-            if counter % 1_000_000 == 0 {
-                debug!("Processed {}M items", counter / 1_000_000);
-            }
-        }
-        if prev_pos != 0 {
-            counter += 1;
-
-            pos = record.position().unwrap().byte();
-            let address = Address {
-                offset: prev_pos,
-                length: pos - prev_pos,
-            };
-            locked_index.insert(prev_value, address);
-        }
-
-        counter
-    });
-
-    let start = Instant::now();
-    let counter = handle.join().unwrap_or_else(|_| panic!("Thread problem"));
+    let counter = handles
+        .into_iter()
+        .map(|handle| handle.join().unwrap_or_else(|_| panic!("Thread problem")))
+        .collect::<Result<Vec<u64>, Box<dyn Error + Send>>>()
+        .unwrap()
+        .iter()
+        .sum::<u64>();
 
     let index = Arc::try_unwrap(csv_index)
         .unwrap_or_else(|_| panic!("Arc problem"))
