@@ -17,8 +17,9 @@ use crate::toc::TypedToc;
 use clap::{value_t, App, Arg, SubCommand};
 
 use std::error::Error;
-
 use std::fs::File;
+use std::sync::{Arc, Mutex};
+use std::thread;
 
 fn main() -> Result<(), Box<Error>> {
     let env = Env::default().filter_or("RUST_LOG", "info");
@@ -125,50 +126,62 @@ fn main() -> Result<(), Box<Error>> {
 }
 
 fn index(file: File, column: usize, csv_type: &str) -> Result<CsvIndexType, Box<Error>> {
-    let mut index = CsvIndexType::new(csv_type)?;
+    let csv_index = Arc::new(Mutex::new(CsvIndexType::new(csv_type)?));
 
-    let mut rdr = csv::Reader::from_reader(file);
-    let mut record = csv::StringRecord::new();
-    let mut prev_value = String::from("");
-    let mut prev_pos = 0;
-    let mut pos;
-    let mut counter = 0u64;
+    let thread_index = Arc::clone(&csv_index);
+    let handle = thread::spawn(move || {
+        let mut locked_index = thread_index.lock().unwrap();
 
-    let start = Instant::now();
+        let mut rdr = csv::Reader::from_reader(file);
+        let mut record = csv::StringRecord::new();
+        let mut prev_value = String::from("");
+        let mut prev_pos = 0;
+        let mut pos;
+        let mut counter = 0u64;
 
-    while rdr.read_record(&mut record)? {
-        pos = record.position().unwrap().byte();
+        while rdr.read_record(&mut record).unwrap() {
+            pos = record.position().unwrap().byte();
 
+            if prev_pos != 0 {
+                counter += 1;
+
+                let address = Address {
+                    offset: prev_pos,
+                    length: pos - prev_pos,
+                };
+                locked_index.insert(prev_value.clone(), address);
+            }
+
+            // no new alloc
+            prev_value.clear();
+            prev_value.push_str(&record[column]);
+
+            prev_pos = pos;
+
+            if counter % 1_000_000 == 0 {
+                debug!("Processed {}M items", counter / 1_000_000);
+            }
+        }
         if prev_pos != 0 {
             counter += 1;
 
+            pos = record.position().unwrap().byte();
             let address = Address {
                 offset: prev_pos,
                 length: pos - prev_pos,
             };
-            index.insert(prev_value.clone(), address);
+            locked_index.insert(prev_value, address);
         }
 
-        // no new alloc
-        prev_value.clear();
-        prev_value.push_str(&record[column]);
+        counter
+    });
 
-        prev_pos = pos;
+    let start = Instant::now();
+    let counter = handle.join().unwrap_or_else(|_| panic!("Thread problem"));
 
-        if counter % 1_000_000 == 0 {
-            debug!("Processed {}M items", counter / 1_000_000);
-        }
-    }
-    if prev_pos != 0 {
-        counter += 1;
-
-        pos = record.position().unwrap().byte();
-        let address = Address {
-            offset: prev_pos,
-            length: pos - prev_pos,
-        };
-        index.insert(prev_value, address);
-    }
+    let index = Arc::try_unwrap(csv_index)
+        .unwrap_or_else(|_| panic!("Arc problem"))
+        .into_inner()?;
 
     info!("Read {} rows with {} unique values", counter, index.len());
     let elapsed = start.elapsed().as_secs();
