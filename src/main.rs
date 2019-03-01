@@ -21,7 +21,7 @@ use std::error::Error;
 use std::fs::File;
 
 fn main() -> Result<(), Box<Error>> {
-    let env = Env::default().filter_or("RUST_LOG", "debug");
+    let env = Env::default().filter_or("RUST_LOG", "info");
     env_logger::init_from_env(env);
 
     let matches = App::new("csv_index")
@@ -175,6 +175,8 @@ fn index(file: File, column: usize, csv_type: &str) -> Result<CsvIndexType, Box<
     if elapsed > 0 {
         info!("Records/sec: {}", counter / elapsed);
     }
+
+    index.print_range();
 
     Ok(index)
 }

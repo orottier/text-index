@@ -19,7 +19,7 @@ use crate::unsafe_float::UnsafeFloat;
 use std::f64;
 use std::i64;
 
-use log::debug;
+use log::{debug, info};
 use std::fmt::Debug;
 
 #[inline]
@@ -38,6 +38,10 @@ pub struct CsvIndex<R: Ord>(pub BTreeMap<R, Vec<Address>>);
 impl<R: Ord> CsvIndex<R> {
     pub fn new() -> Self {
         CsvIndex(BTreeMap::new())
+    }
+
+    pub fn keys(&self) -> std::collections::btree_map::Keys<R, Vec<Address>> {
+        self.0.keys()
     }
 }
 
@@ -115,6 +119,32 @@ impl CsvIndexType {
             CsvIndexType::STR(index) => index.0.len(),
             CsvIndexType::I64(index) => index.0.len(),
             CsvIndexType::F64(index) => index.0.len(),
+        }
+    }
+
+    pub fn print_range(&self) {
+        match &self {
+            CsvIndexType::STR(index) => {
+                info!(
+                    "Min value {:?}, max {:?}",
+                    index.keys().next(),
+                    index.keys().next_back()
+                );
+            }
+            CsvIndexType::I64(index) => {
+                info!(
+                    "Min value {:?}, max {:?}",
+                    index.keys().find(|&&x| x != i64::MIN),
+                    index.keys().next_back()
+                );
+            }
+            CsvIndexType::F64(index) => {
+                info!(
+                    "Min value {:?}, max {:?}",
+                    index.keys().find(|&&x| x.0 != f64::NEG_INFINITY),
+                    index.keys().next_back()
+                );
+            }
         }
     }
 
