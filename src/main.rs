@@ -133,10 +133,11 @@ fn index(filename: &str, column: usize, csv_type: &str) -> Result<CsvIndexType, 
     let csv_index = Arc::new(Mutex::new(CsvIndexType::new(csv_type)?));
 
     let mut handles = Vec::new();
-    for _ in 0..5 {
+    for i in 1..5 {
         let thread_index = Arc::clone(&csv_index);
         let thread_file = File::open(filename)?;
-        let handle = thread::spawn(move || index::scan_file(&thread_file, column, &thread_index));
+        let handle =
+            thread::spawn(move || index::scan_file(&thread_file, column, &thread_index, i));
 
         handles.push(handle);
     }
