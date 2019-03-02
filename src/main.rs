@@ -23,11 +23,14 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 fn main() -> Result<(), Box<Error>> {
-    let env = Env::default().filter_or("RUST_LOG", "info");
-    env_logger::init_from_env(env);
-
     let matches = App::new("csv_index")
         .version("0.1")
+        .arg(
+            Arg::with_name("v")
+                .short("v")
+                .multiple(true)
+                .help("Verbosity (-v, -vv supported)"),
+        )
         .arg(
             Arg::with_name("INPUT")
                 .help("Sets the input file to use")
@@ -79,6 +82,14 @@ fn main() -> Result<(), Box<Error>> {
                 ),
         )
         .get_matches();
+
+    let default_log = match matches.occurrences_of("v") {
+        0 => "info",
+        1 => "debug",
+        _ => "trace",
+    };
+    let env = Env::default().filter_or("RUST_LOG", default_log);
+    env_logger::init_from_env(env);
 
     let filename = matches
         .value_of("INPUT")
