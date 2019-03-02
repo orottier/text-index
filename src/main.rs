@@ -26,10 +26,18 @@ fn main() -> Result<(), Box<Error>> {
     let matches = App::new("csv_index")
         .version("0.1")
         .arg(
-            Arg::with_name("v")
+            Arg::with_name("VERBOSITY")
                 .short("v")
                 .multiple(true)
-                .help("Verbosity (-v, -vv supported)"),
+                .help("Verbose output (-v, -vv supported)"),
+        )
+        .arg(
+            Arg::with_name("THREADS")
+                .value_name("THREADS")
+                .short("t")
+                .help("Max number of THREADS")
+                .takes_value(true)
+                .empty_values(false),
         )
         .arg(
             Arg::with_name("INPUT")
@@ -83,7 +91,7 @@ fn main() -> Result<(), Box<Error>> {
         )
         .get_matches();
 
-    let default_log = match matches.occurrences_of("v") {
+    let default_log = match matches.occurrences_of("VERBOSITY") {
         0 => "info",
         1 => "debug",
         _ => "trace",
@@ -96,13 +104,19 @@ fn main() -> Result<(), Box<Error>> {
         .expect("required arg cannot be None")
         .to_owned();
 
+    let threads = value_t!(matches.value_of("THREADS"), u64).unwrap_or(2);
+
     if let Some(matches) = matches.subcommand_matches("index") {
         let column = value_t!(matches.value_of("COLUMN"), usize).unwrap_or_else(|e| e.exit());
         let column = column - 1; // index starts at 1
 
         let csv_type = matches.value_of("TYPE").unwrap_or("STR");
 
-        let mut index = index(&filename, column, &csv_type)?;
+        if threads == 0 {
+            panic!("Thread count must be larger than 0");
+        }
+
+        let mut index = index(&filename, column, &csv_type, threads)?;
 
         let fh = File::create(format!("{}.index.{}", filename, column + 1))?;
         index.serialize(fh)?;
@@ -135,20 +149,31 @@ fn main() -> Result<(), Box<Error>> {
         return filter(&mut file, &filename, &select);
     }
 
-    unreachable!();
+    println!("Use one of the subcommands (index, filter, ..)");
+    Ok(())
 }
 
-fn index(filename: &str, column: usize, csv_type: &str) -> Result<CsvIndexType, Box<dyn Error>> {
+fn index(
+    filename: &str,
+    column: usize,
+    csv_type: &str,
+    threads: u64,
+) -> Result<CsvIndexType, Box<dyn Error>> {
+    let file_size = std::fs::metadata(filename)?.len();
+    debug!("file size {}", file_size);
+    let chunk_size = file_size / threads;
+
     let start = Instant::now();
 
     let csv_index = Arc::new(Mutex::new(CsvIndexType::new(csv_type)?));
 
     let mut handles = Vec::new();
-    for i in 1..5 {
+    for i in 0..threads {
         let thread_index = Arc::clone(&csv_index);
         let thread_file = File::open(filename)?;
-        let handle =
-            thread::spawn(move || index::scan_file(&thread_file, column, &thread_index, i));
+        let handle = thread::Builder::new()
+            .name(format!("reader_{}", i))
+            .spawn(move || index::scan_file(&thread_file, column, &thread_index, i, chunk_size))?;
 
         handles.push(handle);
     }
