@@ -5,7 +5,7 @@ use std::io::Seek;
 use std::io::SeekFrom;
 
 use crate::address::Address;
-use csv::{ReaderBuilder, StringRecord};
+use csv::{ByteRecord, ReaderBuilder};
 
 pub struct CsvReader<'a> {
     rdr: csv::Reader<Box<dyn 'a + Read>>,
@@ -15,7 +15,7 @@ pub struct CsvReader<'a> {
     chunk_size: u64,
 
     // current record being read, to prevent allocations in loop
-    record: StringRecord,
+    record: ByteRecord,
 }
 
 impl<'a> CsvReader<'a> {
@@ -46,7 +46,7 @@ impl<'a> CsvReader<'a> {
             padding,
             offset,
             chunk_size,
-            record: StringRecord::new(),
+            record: ByteRecord::new(),
         }
     }
 
@@ -59,7 +59,7 @@ impl<'a> Iterator for CsvReader<'a> {
     type Item = (Address, String);
 
     fn next(&mut self) -> Option<(Address, String)> {
-        let success = self.rdr.read_record(&mut self.record).unwrap();
+        let success = self.rdr.read_byte_record(&mut self.record).unwrap();
         if !success {
             return None;
         }
@@ -74,7 +74,12 @@ impl<'a> Iterator for CsvReader<'a> {
             length: self.rdr.position().byte() - pos,
         };
 
-        Some((address, self.record[self.column].to_owned()))
+        Some((
+            address,
+            std::str::from_utf8(&self.record[self.column])
+                .unwrap()
+                .to_owned(),
+        ))
     }
 }
 
