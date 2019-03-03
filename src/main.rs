@@ -10,19 +10,11 @@ mod toc;
 mod unsafe_float;
 
 use env_logger::Env;
-use log::{debug, info};
-use std::time::Instant;
-
-use crate::csv_index::{print_matching_records, CsvIndexType};
-use crate::filter::{Filter, Operator};
-use crate::toc::TypedToc;
 
 use clap::{value_t, App, Arg, SubCommand};
 
 use std::error::Error;
 use std::fs::File;
-use std::sync::{Arc, Mutex};
-use std::thread;
 
 fn main() -> Result<(), Box<Error>> {
     let matches = App::new("csv_index")
@@ -118,7 +110,7 @@ fn main() -> Result<(), Box<Error>> {
             panic!("Thread count must be larger than 0");
         }
 
-        let mut index = index(&filename, column, &csv_type, threads)?;
+        let mut index = index::index(&filename, column, &csv_type, threads)?;
 
         let fh = File::create(format!("{}.index.{}", filename, column + 1))?;
         index.serialize(fh)?;
@@ -139,91 +131,15 @@ fn main() -> Result<(), Box<Error>> {
         let value2 = matches.value_of("VALUE2").unwrap_or("");
 
         let op_str = matches.value_of("OP").expect("required arg cannot be None");
-        let op = Operator::from(op_str)?;
+        let op = filter::Operator::from(op_str)?;
 
-        let select = Filter {
-            op,
-            value,
-            value2,
-            column,
-        };
+        let filter = filter::Filter::from(op, &value, &value2, column);
 
-        return filter(&mut file, &filename, &select);
+        let stdout = std::io::stdout();
+        let writer = stdout.lock();
+
+        return filter.execute(&mut file, &filename, writer);
     }
 
-    println!("Use one of the subcommands (index, filter, ..)");
-    Ok(())
-}
-
-fn index(
-    filename: &str,
-    column: usize,
-    csv_type: &str,
-    threads: u64,
-) -> Result<CsvIndexType, Box<dyn Error>> {
-    let file_size = std::fs::metadata(filename)?.len();
-    debug!("file size {}", file_size);
-    let chunk_size = file_size / threads;
-
-    let start = Instant::now();
-
-    let csv_index = Arc::new(Mutex::new(CsvIndexType::new(csv_type)?));
-
-    let mut handles = Vec::new();
-    for i in 0..threads {
-        let thread_index = Arc::clone(&csv_index);
-        let thread_file = File::open(filename)?;
-        let handle = thread::Builder::new()
-            .name(format!("reader_{}", i))
-            .spawn(move || index::scan_file(&thread_file, column, &thread_index, i, chunk_size))?;
-
-        handles.push(handle);
-    }
-
-    let counter = handles
-        .into_iter()
-        .map(|handle| handle.join().unwrap_or_else(|_| panic!("Thread problem")))
-        .collect::<Result<Vec<u64>, Box<dyn Error + Send>>>()
-        .unwrap()
-        .iter()
-        .sum::<u64>();
-
-    let index = Arc::try_unwrap(csv_index)
-        .unwrap_or_else(|_| panic!("Arc problem"))
-        .into_inner()?;
-
-    info!("Read {} rows with {} unique values", counter, index.len());
-    let elapsed = start.elapsed().as_secs();
-    if elapsed > 0 {
-        info!("Records/sec: {}", counter / elapsed);
-    }
-
-    index.print_range();
-
-    Ok(index)
-}
-
-fn filter(file: &mut File, filename: &str, select: &Filter) -> Result<(), Box<Error>> {
-    let mut fh = File::open(format!("{}.index.{}", filename, select.column + 1))?;
-    let typed_toc = TypedToc::open(&mut fh)?;
-
-    match typed_toc {
-        TypedToc::STR(typed_toc) => {
-            let bounds = select.string_bounds();
-            let index = typed_toc.get_index(&mut fh, &bounds)?;
-            print_matching_records(index, bounds, &file);
-        }
-        TypedToc::I64(typed_toc) => {
-            let bounds = select.int_bounds();
-            let index = typed_toc.get_index(&mut fh, &bounds)?;
-            print_matching_records(index, bounds, &file);
-        }
-        TypedToc::F64(typed_toc) => {
-            let bounds = select.float_bounds();
-            let index = typed_toc.get_index(&mut fh, &bounds)?;
-            print_matching_records(index, bounds, &file);
-        }
-    };
-
-    Ok(())
+    Err("Use one of the subcommands (index, filter, ..)")?
 }

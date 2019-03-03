@@ -1,13 +1,10 @@
 use std::error::Error;
 use std::fs::File;
 
-use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
 use std::io::Write;
-use std::io::{self, StdoutLock};
 
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::BTreeMap;
 
@@ -21,17 +18,6 @@ use std::f64;
 use std::i64;
 
 use log::{debug, info};
-use std::fmt::Debug;
-
-#[inline]
-fn print_record(handle: &mut StdoutLock, mut file: &File, address: &Address) {
-    let mut buf = vec![0u8; address.length as usize];
-    file.seek(SeekFrom::Start(address.offset))
-        .expect("Unable to seek file pos");
-    file.read_exact(&mut buf).expect("Unable to read file");
-
-    handle.write_all(&buf).unwrap();
-}
 
 #[derive(Serialize, Deserialize)]
 pub struct CsvIndex<R: Ord>(pub BTreeMap<R, Vec<Address>>);
@@ -44,26 +30,20 @@ impl<R: Ord> CsvIndex<R> {
     pub fn keys(&self) -> std::collections::btree_map::Keys<R, Vec<Address>> {
         self.0.keys()
     }
-}
 
-pub fn print_matching_records<R: Ord + Clone + Debug + DeserializeOwned>(
-    indexes: Vec<CsvIndex<R>>,
-    bounds: Range<R>,
-    file: &File,
-) {
-    let stdout = io::stdout();
-    let mut handle = stdout.lock();
-
-    indexes.into_iter().for_each(|index| {
-        let b_clone = (bounds.0.clone(), bounds.1.clone());
-        index
-            .0
-            .range(b_clone)
+    pub fn print_matching_records<W: Write>(
+        &self,
+        bounds: Range<R>,
+        file: &File,
+        mut writer: &mut W,
+    ) {
+        self.0
+            .range(bounds)
             .flat_map(|(_key, vals)| vals.into_iter())
             .for_each(|address| {
-                print_record(&mut handle, &file, address);
+                address.print_record(&mut writer, &file);
             });
-    });
+    }
 }
 
 pub enum CsvIndexType {
@@ -85,7 +65,7 @@ impl Serialize for CsvIndexType {
 }
 
 impl CsvIndexType {
-    pub fn new(csv_type: &str) -> Result<Self, &'static str> {
+    pub fn try_new(csv_type: &str) -> Result<Self, &'static str> {
         match csv_type.to_uppercase().as_ref() {
             "STR" => Ok(CsvIndexType::STR(CsvIndex::<Vec<u8>>::new())),
             "INT" => Ok(CsvIndexType::I64(CsvIndex::<i64>::new())),
@@ -159,10 +139,13 @@ impl CsvIndexType {
 
     pub fn serialize(&mut self, mut fh: File) -> Result<(), Box<Error>> {
         let num_chunks = 2 + self.len() / 50000;
+        info!("Dividing into {} chunks", num_chunks);
 
         match self {
             CsvIndexType::STR(index) => {
                 let chunked_map = chunk_map(&mut index.0, num_chunks);
+                info!("Writing to file");
+
                 let mut toc = Toc::<Vec<u8>>::new(num_chunks);
 
                 // build phantom TOC
@@ -185,6 +168,8 @@ impl CsvIndexType {
 
             CsvIndexType::I64(index) => {
                 let chunked_map = chunk_map(&mut index.0, num_chunks);
+                info!("Writing to file");
+
                 let mut toc = Toc::<i64>::new(num_chunks);
 
                 // build phantom TOC
@@ -206,6 +191,8 @@ impl CsvIndexType {
             }
             CsvIndexType::F64(index) => {
                 let chunked_map = chunk_map(&mut index.0, num_chunks);
+                info!("Writing to file");
+
                 let mut toc = Toc::<UnsafeFloat>::new(num_chunks);
 
                 // build phantom TOC
