@@ -56,9 +56,9 @@ impl<'a> CsvReader<'a> {
 }
 
 impl<'a> Iterator for CsvReader<'a> {
-    type Item = (Address, String);
+    type Item = (Address, Vec<u8>);
 
-    fn next(&mut self) -> Option<(Address, String)> {
+    fn next(&mut self) -> Option<(Address, Vec<u8>)> {
         let success = self.rdr.read_byte_record(&mut self.record).unwrap();
         if !success {
             return None;
@@ -74,12 +74,7 @@ impl<'a> Iterator for CsvReader<'a> {
             length: self.rdr.position().byte() - pos,
         };
 
-        Some((
-            address,
-            std::str::from_utf8(&self.record[self.column])
-                .unwrap()
-                .to_owned(),
-        ))
+        Some((address, self.record[self.column].to_owned()))
     }
 }
 
@@ -111,7 +106,7 @@ Amsterdam,Netherlands,7500000
                 length: 29
             }
         );
-        assert_eq!(record, "Boston".to_string());
+        assert_eq!(record, b"Boston".to_owned());
 
         let item = reader.next();
         assert!(item.is_some());
@@ -124,7 +119,7 @@ Amsterdam,Netherlands,7500000
                 length: 30
             }
         );
-        assert_eq!(record, "Amsterdam".to_string());
+        assert_eq!(record, b"Amsterdam".to_owned());
 
         let item = reader.next();
         assert!(item.is_none());
@@ -154,7 +149,7 @@ Amsterdam,Netherlands,7500000
                 length: 29
             }
         );
-        assert_eq!(record, "Boston".to_string());
+        assert_eq!(record, b"Boston".to_owned());
 
         let item = reader.next();
         assert!(item.is_none());
@@ -187,7 +182,7 @@ Amsterdam,Netherlands,7500000
                 length: 30
             }
         );
-        assert_eq!(record, "Amsterdam".to_string());
+        assert_eq!(record, b"Amsterdam".to_owned());
 
         let item = reader.next();
         assert!(item.is_none());

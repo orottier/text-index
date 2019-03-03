@@ -36,7 +36,7 @@ pub struct Toc<R> {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum TypedToc {
-    STR(Toc<String>),
+    STR(Toc<Vec<u8>>),
     I64(Toc<i64>),
     F64(Toc<UnsafeFloat>),
 }

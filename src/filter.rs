@@ -38,24 +38,24 @@ pub struct Filter<'a> {
 }
 
 impl<'a> Filter<'a> {
-    pub fn string_bounds(&self) -> (Bound<String>, Bound<String>) {
+    pub fn string_bounds(&self) -> (Bound<Vec<u8>>, Bound<Vec<u8>>) {
         match self.op {
             Operator::EQ => (
-                Included(self.value.to_owned()),
-                Included(self.value.to_owned()),
+                Included(self.value.as_bytes().to_owned()),
+                Included(self.value.as_bytes().to_owned()),
             ),
-            Operator::LE => (Unbounded, Included(self.value.to_owned())),
-            Operator::LT => (Unbounded, Excluded(self.value.to_owned())),
-            Operator::GT => (Excluded(self.value.to_owned()), Unbounded),
-            Operator::GE => (Included(self.value.to_owned()), Unbounded),
+            Operator::LE => (Unbounded, Included(self.value.as_bytes().to_owned())),
+            Operator::LT => (Unbounded, Excluded(self.value.as_bytes().to_owned())),
+            Operator::GT => (Excluded(self.value.as_bytes().to_owned()), Unbounded),
+            Operator::GE => (Included(self.value.as_bytes().to_owned()), Unbounded),
             Operator::IN => (
-                Included(self.value.to_owned()),
-                Included(self.value2.to_owned()),
+                Included(self.value.as_bytes().to_owned()),
+                Included(self.value2.as_bytes().to_owned()),
             ),
             Operator::PRE => {
-                let mut upper = self.value.to_owned();
-                upper.push('\u{E01EF}'); // highest valid unicode char (currently)
-                (Included(self.value.to_owned()), Included(upper))
+                let mut upper = self.value.as_bytes().to_owned();
+                upper.append(&mut vec![255; 4]);
+                (Included(self.value.as_bytes().to_owned()), Included(upper))
             }
         }
     }

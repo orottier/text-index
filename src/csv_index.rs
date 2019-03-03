@@ -67,7 +67,7 @@ pub fn print_matching_records<R: Ord + Clone + Debug + DeserializeOwned>(
 }
 
 pub enum CsvIndexType {
-    STR(CsvIndex<String>),
+    STR(CsvIndex<Vec<u8>>),
     I64(CsvIndex<i64>),
     F64(CsvIndex<UnsafeFloat>),
 }
@@ -87,7 +87,7 @@ impl Serialize for CsvIndexType {
 impl CsvIndexType {
     pub fn new(csv_type: &str) -> Result<Self, &'static str> {
         match csv_type.to_uppercase().as_ref() {
-            "STR" => Ok(CsvIndexType::STR(CsvIndex::<String>::new())),
+            "STR" => Ok(CsvIndexType::STR(CsvIndex::<Vec<u8>>::new())),
             "INT" => Ok(CsvIndexType::I64(CsvIndex::<i64>::new())),
             "FLOAT" => Ok(CsvIndexType::F64(CsvIndex::<UnsafeFloat>::new())),
             _ => Err("Unknown operator"),
@@ -95,15 +95,23 @@ impl CsvIndexType {
     }
 
     #[inline]
-    pub fn insert(&mut self, key: String, value: Address) {
+    pub fn insert(&mut self, key: Vec<u8>, value: Address) {
         match self {
             CsvIndexType::STR(index) => index.0.entry(key).or_insert_with(|| vec![]).push(value),
             CsvIndexType::I64(index) => {
-                let key = key.parse().unwrap_or(i64::MIN);
+                let key = std::str::from_utf8(&key)
+                    .unwrap_or("")
+                    .parse()
+                    .unwrap_or(i64::MIN);
                 index.0.entry(key).or_insert_with(|| vec![]).push(value)
             }
             CsvIndexType::F64(index) => {
-                let key = UnsafeFloat(key.parse().unwrap_or(f64::NEG_INFINITY));
+                let key = UnsafeFloat(
+                    std::str::from_utf8(&key)
+                        .unwrap_or("")
+                        .parse()
+                        .unwrap_or(f64::NEG_INFINITY),
+                );
                 index.0.entry(key).or_insert_with(|| vec![]).push(value)
             }
         }
@@ -122,8 +130,14 @@ impl CsvIndexType {
             CsvIndexType::STR(index) => {
                 info!(
                     "Min value {:?}, max {:?}",
-                    index.keys().next(),
-                    index.keys().next_back()
+                    index
+                        .keys()
+                        .next()
+                        .map(|b| std::str::from_utf8(b).unwrap_or("INVALID")),
+                    index
+                        .keys()
+                        .next_back()
+                        .map(|b| std::str::from_utf8(b).unwrap_or("INVALID")),
                 );
             }
             CsvIndexType::I64(index) => {
@@ -149,7 +163,7 @@ impl CsvIndexType {
         match self {
             CsvIndexType::STR(index) => {
                 let chunked_map = chunk_map(&mut index.0, num_chunks);
-                let mut toc = Toc::<String>::new(num_chunks);
+                let mut toc = Toc::<Vec<u8>>::new(num_chunks);
 
                 // build phantom TOC
                 toc.build_empty(&chunked_map);
@@ -161,7 +175,7 @@ impl CsvIndexType {
                 // count size of toc
                 let toc_len = fh.seek(SeekFrom::Current(0))?;
 
-                let mut toc = Toc::<String>::new(num_chunks);
+                let mut toc = Toc::<Vec<u8>>::new(num_chunks);
                 toc.write_maps(&mut fh, chunked_map, toc_len)?;
 
                 let typed_toc = TypedToc::STR(toc);
