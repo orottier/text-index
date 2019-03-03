@@ -11,14 +11,16 @@ mod unsafe_float;
 
 use env_logger::Env;
 
-use clap::{value_t, App, Arg, SubCommand};
+use clap::{crate_authors, crate_name, crate_version, value_t};
+use clap::{App, Arg, SubCommand};
 
 use std::error::Error;
 use std::fs::File;
 
 fn main() -> Result<(), Box<Error>> {
-    let matches = App::new("csv_index")
-        .version("0.1")
+    let matches = App::new(crate_name!())
+        .version(crate_version!())
+        .author(crate_authors!("\n"))
         .arg(
             Arg::with_name("VERBOSITY")
                 .short("v")
