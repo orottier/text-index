@@ -21,8 +21,8 @@ use std::collections::BTreeMap;
 use log::debug;
 use std::fmt::Debug;
 
+use crate::address::Address;
 use crate::bits;
-use crate::csv_index::Address;
 use crate::csv_index::CsvIndex;
 use crate::range::ranges_overlap;
 use crate::range::Range;

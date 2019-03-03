@@ -11,6 +11,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::BTreeMap;
 
+use crate::address::Address;
 use crate::chunked_map::chunk_map;
 use crate::range::Range;
 use crate::toc::{Toc, TypedToc};
@@ -43,12 +44,6 @@ impl<R: Ord> CsvIndex<R> {
     pub fn keys(&self) -> std::collections::btree_map::Keys<R, Vec<Address>> {
         self.0.keys()
     }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Address {
-    pub offset: u64,
-    pub length: u64,
 }
 
 pub fn print_matching_records<R: Ord + Clone + Debug + DeserializeOwned>(

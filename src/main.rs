@@ -1,6 +1,8 @@
+mod address;
 mod bits;
 mod chunked_map;
 mod csv_index;
+mod csv_reader;
 mod filter;
 mod index;
 mod range;
