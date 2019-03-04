@@ -134,7 +134,7 @@ impl<R: Ord + Serialize + DeserializeOwned + Clone + Debug> Toc<R> {
         let write_ops: Result<Vec<()>, Box<dyn Error>> = chunked_map
             .into_iter()
             .map(|(key, sub_map)| {
-                let index = CsvIndex(sub_map);
+                let index = CsvIndex::from(sub_map);
 
                 let gz = GzEncoder::new(&mut fh, Compression::fast());
                 bincode::serialize_into(gz, &index)?;

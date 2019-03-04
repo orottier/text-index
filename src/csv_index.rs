@@ -6,6 +6,7 @@ use std::io::SeekFrom;
 use std::io::Write;
 
 use serde::{Deserialize, Serialize, Serializer};
+use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 
 use crate::address::Address;
@@ -20,15 +21,35 @@ use std::i64;
 use log::{debug, info};
 
 #[derive(Serialize, Deserialize)]
-pub struct CsvIndex<R: Ord>(pub BTreeMap<R, Vec<Address>>);
+pub struct CsvIndex<R: Ord> {
+    map: BTreeMap<R, Vec<Address>>,
+}
 
 impl<R: Ord> CsvIndex<R> {
     pub fn new() -> Self {
-        CsvIndex(BTreeMap::new())
+        CsvIndex {
+            map: BTreeMap::new(),
+        }
+    }
+
+    pub fn from(map: BTreeMap<R, Vec<Address>>) -> Self {
+        CsvIndex { map }
+    }
+
+    pub fn into_map(self) -> BTreeMap<R, Vec<Address>> {
+        self.map
+    }
+
+    pub fn entry(&mut self, k: R) -> Entry<R, Vec<Address>> {
+        self.map.entry(k)
     }
 
     pub fn keys(&self) -> std::collections::btree_map::Keys<R, Vec<Address>> {
-        self.0.keys()
+        self.map.keys()
+    }
+
+    pub fn uniques(&self) -> usize {
+        self.map.len()
     }
 
     pub fn print_matching_records<W: Write>(
@@ -37,7 +58,7 @@ impl<R: Ord> CsvIndex<R> {
         file: &File,
         mut writer: &mut W,
     ) {
-        self.0
+        self.map
             .range(bounds)
             .flat_map(|(_key, vals)| vals.into_iter())
             .for_each(|address| {
@@ -57,9 +78,9 @@ impl Serialize for CsvIndexType {
         S: Serializer,
     {
         match self {
-            CsvIndexType::STR(index) => index.0.serialize(serializer),
-            CsvIndexType::I64(index) => index.0.serialize(serializer),
-            CsvIndexType::F64(index) => index.0.serialize(serializer),
+            CsvIndexType::STR(index) => index.serialize(serializer),
+            CsvIndexType::I64(index) => index.serialize(serializer),
+            CsvIndexType::F64(index) => index.serialize(serializer),
         }
     }
 }
@@ -77,13 +98,13 @@ impl CsvIndexType {
     #[inline]
     pub fn insert(&mut self, key: Vec<u8>, value: Address) {
         match self {
-            CsvIndexType::STR(index) => index.0.entry(key).or_insert_with(|| vec![]).push(value),
+            CsvIndexType::STR(index) => index.entry(key).or_insert_with(|| vec![]).push(value),
             CsvIndexType::I64(index) => {
                 let key = std::str::from_utf8(&key)
                     .unwrap_or("")
                     .parse()
                     .unwrap_or(i64::MIN);
-                index.0.entry(key).or_insert_with(|| vec![]).push(value)
+                index.entry(key).or_insert_with(|| vec![]).push(value)
             }
             CsvIndexType::F64(index) => {
                 let key = UnsafeFloat(
@@ -92,16 +113,16 @@ impl CsvIndexType {
                         .parse()
                         .unwrap_or(f64::NEG_INFINITY),
                 );
-                index.0.entry(key).or_insert_with(|| vec![]).push(value)
+                index.entry(key).or_insert_with(|| vec![]).push(value)
             }
         }
     }
 
-    pub fn len(&self) -> usize {
+    pub fn uniques(&self) -> usize {
         match &self {
-            CsvIndexType::STR(index) => index.0.len(),
-            CsvIndexType::I64(index) => index.0.len(),
-            CsvIndexType::F64(index) => index.0.len(),
+            CsvIndexType::STR(index) => index.uniques(),
+            CsvIndexType::I64(index) => index.uniques(),
+            CsvIndexType::F64(index) => index.uniques(),
         }
     }
 
@@ -137,13 +158,13 @@ impl CsvIndexType {
         }
     }
 
-    pub fn serialize(&mut self, mut fh: File) -> Result<(), Box<Error>> {
-        let num_chunks = 2 + self.len() / 50000;
+    pub fn serialize(self, mut fh: File, length: u64) -> Result<(), Box<Error>> {
+        let num_chunks = 2 + length as usize / 50000;
         info!("Dividing into {} chunks", num_chunks);
 
         match self {
             CsvIndexType::STR(index) => {
-                let chunked_map = chunk_map(&mut index.0, num_chunks);
+                let chunked_map = chunk_map(&mut index.into_map(), num_chunks);
                 info!("Writing to file");
 
                 let mut toc = Toc::<Vec<u8>>::new(num_chunks);
@@ -167,7 +188,7 @@ impl CsvIndexType {
             }
 
             CsvIndexType::I64(index) => {
-                let chunked_map = chunk_map(&mut index.0, num_chunks);
+                let chunked_map = chunk_map(&mut index.into_map(), num_chunks);
                 info!("Writing to file");
 
                 let mut toc = Toc::<i64>::new(num_chunks);
@@ -190,7 +211,7 @@ impl CsvIndexType {
                 typed_toc.write_head(&mut fh, toc_len)?;
             }
             CsvIndexType::F64(index) => {
-                let chunked_map = chunk_map(&mut index.0, num_chunks);
+                let chunked_map = chunk_map(&mut index.into_map(), num_chunks);
                 info!("Writing to file");
 
                 let mut toc = Toc::<UnsafeFloat>::new(num_chunks);

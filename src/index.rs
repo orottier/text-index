@@ -15,7 +15,7 @@ pub fn index(
     column: usize,
     csv_type: &str,
     threads: u64,
-) -> Result<CsvIndexType, Box<dyn Error>> {
+) -> Result<(CsvIndexType, u64), Box<dyn Error>> {
     let file_size = std::fs::metadata(filename)?.len();
     debug!("file size {}", file_size);
     let chunk_size = file_size / threads;
@@ -47,7 +47,11 @@ pub fn index(
         .unwrap_or_else(|_| panic!("Arc problem"))
         .into_inner()?;
 
-    info!("Read {} rows with {} unique values", counter, index.len());
+    info!(
+        "Read {} rows with {} unique values",
+        counter,
+        index.uniques()
+    );
     let elapsed = start.elapsed().as_secs();
     if elapsed > 0 {
         info!("Records/sec: {}", counter / elapsed);
@@ -55,7 +59,7 @@ pub fn index(
 
     index.print_range();
 
-    Ok(index)
+    Ok((index, counter))
 }
 
 fn index_chunk(

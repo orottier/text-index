@@ -112,10 +112,10 @@ fn main() -> Result<(), Box<Error>> {
             panic!("Thread count must be larger than 0");
         }
 
-        let mut index = index::index(&filename, column, &csv_type, threads)?;
+        let (index, length) = index::index(&filename, column, &csv_type, threads)?;
 
         let fh = File::create(format!("{}.index.{}", filename, column + 1))?;
-        index.serialize(fh)?;
+        index.serialize(fh, length)?;
 
         return Ok(());
     }
