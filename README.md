@@ -29,7 +29,7 @@ ARGS:
     <TYPE>      Type (str(default), int, float)
 ```
 
-e.g. `test_index input.csv -t 4 index 1 str`
+e.g. `text_index input.csv -t 4 index 1 str`
 
 ### Query the index
 
@@ -44,7 +44,7 @@ ARGS:
     <VALUE2>    Value2 (when operator is `in`)
 ```
 
-e.g. `test_index input.csv filter 1 eq "search_string"`
+e.g. `text_index input.csv filter 1 eq "search_string"`
 
 ## The future
 
